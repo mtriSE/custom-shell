@@ -43,13 +43,11 @@ int main()
       }
       else
       {
-        input = command;
-        goto command_not_found;
+        std::cout << command << ": not found" << std::endl;
       }
     }
     else
     {
-command_not_found:
       std::cout << input << ": command not found" << std::endl;
     }
   }
