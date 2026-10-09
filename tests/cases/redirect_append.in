@@ -1,0 +1,18 @@
+echo first >> output.txt
+echo second >> output.txt
+cat output.txt
+echo Hello Emily 1>> baz.md
+echo Hello Maria 1>> baz.md
+cat baz.md
+echo List of files: > qux.md
+echo apple >> qux.md
+cat qux.md
+echo a > t.txt
+echo b >> t.txt > u.txt
+cat t.txt
+cat u.txt
+echo '>>' x
+echo x >>
+echo x >> >> y
+echo back on terminal
+exit

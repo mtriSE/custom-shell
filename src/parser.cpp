@@ -30,9 +30,10 @@ namespace
   public:
     std::vector<Token> run(const std::string &input)
     {
-      for (char c : input)
+      input_ = input;
+      for (pos_ = 0; pos_ < input_.size(); ++pos_)
       {
-        feed(c);
+        feed(input_[pos_]);
       }
       end_token();
 
@@ -172,8 +173,15 @@ namespace
       quoted_ = false;
     }
 
+    // True if the character right after the one being fed is `c`.
+    bool next_is(char c) const
+    {
+      return pos_ + 1 < input_.size() && input_[pos_ + 1] == c;
+    }
+
     // A plain `1` or `2` right before `>` is the fd number (`2>`), not an argument.
     // Anything else pending (e.g. the `a` in `a>f`) is an argument of its own.
+    // `>>` and `1>>` append instead of truncating.
     void start_redirect()
     {
       int fd = 1;
@@ -188,10 +196,22 @@ namespace
         end_token();
       }
 
-      tokens_.push_back({"", true, fd, false});
+      // A second `>` right after makes it `>>`. Only for stdout in this stage;
+      // `2>>` stays a syntax error.
+      bool append = fd == 1 && next_is('>');
+      if (append)
+      {
+        ++pos_; // consume the second `>`
+      }
+
+      tokens_.push_back({"", true, fd, append});
     }
 
     // --- State --------------------------------------------------------------
+
+    // The whole line and the index of the char being fed, for one-char lookahead.
+    std::string input_;
+    size_t pos_ = 0;
 
     std::vector<Token> tokens_;
     std::string current_;
