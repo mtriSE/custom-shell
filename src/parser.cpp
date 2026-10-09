@@ -172,12 +172,14 @@ namespace
       quoted_ = false;
     }
 
-    // A plain `1` right before `>` is the fd number (`1>`), not an argument.
+    // A plain `1` or `2` right before `>` is the fd number (`2>`), not an argument.
     // Anything else pending (e.g. the `a` in `a>f`) is an argument of its own.
     void start_redirect()
     {
-      if (in_token_ && !quoted_ && current_ == "1")
+      int fd = 1;
+      if (in_token_ && !quoted_ && (current_ == "1" || current_ == "2"))
       {
+        fd = current_[0] - '0';
         current_.clear();
         in_token_ = false;
       }
@@ -186,7 +188,7 @@ namespace
         end_token();
       }
 
-      tokens_.push_back({"", true, 1, false});
+      tokens_.push_back({"", true, fd, false});
     }
 
     // --- State --------------------------------------------------------------

@@ -1,0 +1,18 @@
+ls nonexistent 2> err1.txt
+cat err1.txt
+echo Maria file cannot be found 2> err2.txt
+cat err2.txt
+echo pear > pear.txt
+cat pear.txt nonexistent 2> err3.txt
+cat err3.txt
+nonexistent_cmd 2> err4.txt
+cat err4.txt
+echo a2> f
+cat f
+echo 2 > g
+cat g
+cat nonexistent > out.txt 2> err5.txt
+cat out.txt
+cat err5.txt
+echo back on terminal
+exit
