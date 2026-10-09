@@ -7,6 +7,7 @@ std::vector<std::string> tokenize(const std::string &input)
   // True once an argument has started, even if it is still empty (e.g. '').
   bool in_token = false;
   bool in_single = false;
+  bool in_double = false;
 
   for (char c : input)
   {
@@ -21,9 +22,25 @@ std::vector<std::string> tokenize(const std::string &input)
         current += c;
       }
     }
+    else if (in_double)
+    {
+      if (c == '"')
+      {
+        in_double = false;
+      }
+      else
+      {
+        current += c;
+      }
+    }
     else if (c == '\'')
     {
       in_single = true;
+      in_token = true;
+    }
+    else if (c == '"')
+    {
+      in_double = true;
       in_token = true;
     }
     else if (c == ' ' || c == '\t')
