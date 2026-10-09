@@ -181,7 +181,7 @@ namespace
 
     // A plain `1` or `2` right before `>` is the fd number (`2>`), not an argument.
     // Anything else pending (e.g. the `a` in `a>f`) is an argument of its own.
-    // `>>` and `1>>` append instead of truncating.
+    // `>>`, `1>>` and `2>>` append instead of truncating.
     void start_redirect()
     {
       int fd = 1;
@@ -196,9 +196,8 @@ namespace
         end_token();
       }
 
-      // A second `>` right after makes it `>>`. Only for stdout in this stage;
-      // `2>>` stays a syntax error.
-      bool append = fd == 1 && next_is('>');
+      // A second `>` right after makes it `>>` (`>>`, `1>>`, `2>>`).
+      bool append = next_is('>');
       if (append)
       {
         ++pos_; // consume the second `>`

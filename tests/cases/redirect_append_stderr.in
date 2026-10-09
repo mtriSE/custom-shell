@@ -1,0 +1,23 @@
+cat nonexistent1 2>> errors.txt
+cat nonexistent2 2>> errors.txt
+cat errors.txt
+ls nonexistent >> baz.md
+cat baz.md
+ls nonexistent 2>> qux.md
+cat qux.md
+echo James says Error 2>> quz.md
+cat nonexistent 2>> quz.md
+ls nonexistent 2>> quz.md
+cat quz.md
+nonexistent_cmd 2>> shell_err.txt
+nonexistent_cmd 2>> shell_err.txt
+cat shell_err.txt
+echo hi > out.txt 2>> err.txt
+cat nonexistent >> out.txt 2>> err.txt
+cat out.txt
+cat err.txt
+echo a2>> f
+cat f
+echo x 2>>>g
+echo back on terminal
+exit
