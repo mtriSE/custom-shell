@@ -1,25 +1,57 @@
 #include <iostream>
 #include <string>
+#include <unordered_map>
 
-int main() {
+enum COMMAND_TYPE
+{
+  BUILT_IN_COMMAND,
+};
+
+static const std::unordered_map<std::string, COMMAND_TYPE> COMMANDS{
+    {"echo", BUILT_IN_COMMAND},
+    {"exit", BUILT_IN_COMMAND},
+    {"type", BUILT_IN_COMMAND},
+};
+
+int main()
+{
   // Flush after every std::cout / std:cerr
   std::cout << std::unitbuf;
   std::cerr << std::unitbuf;
 
-  while (true) {
+  while (true)
+  {
     std::cout << "$ ";
 
     std::string input;
     std::getline(std::cin, input);
 
-    if (input == "exit") {
+    if (input == "exit")
+    {
       break;
-    } else if(input.substr(0,5) == "echo ") {
+    }
+    else if (input.substr(0, 5) == "echo ")
+    {
       std::cout << input.substr(5) << std::endl;
-    } else {
+    }
+    else if (input.substr(0, 5) == "type ")
+    {
+      auto command = input.substr(5);
+      if (COMMANDS.find(command) != COMMANDS.end())
+      {
+        std::cout << command << " is a shell builtin" << std::endl;
+      }
+      else
+      {
+        input = command;
+        goto command_not_found;
+      }
+    }
+    else
+    {
+command_not_found:
       std::cout << input << ": command not found" << std::endl;
     }
-
   }
 
   return 0;
