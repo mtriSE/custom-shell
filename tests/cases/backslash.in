@@ -1,0 +1,11 @@
+echo three\ \ \ spaces
+echo before\     after
+echo test\nexample
+echo hello\\world
+echo \'hello\'
+echo \"hi\"
+echo \$HOME \*
+echo a\ b'c'
+echo \ 
+echo trailing\
+exit

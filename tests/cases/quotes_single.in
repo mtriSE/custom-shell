@@ -1,0 +1,8 @@
+echo 'hello    world'
+echo 'hello''world'
+echo hello''world
+echo '$HOME *' '~'
+echo ''
+echo 'say "hi"'
+type 'echo'
+exit

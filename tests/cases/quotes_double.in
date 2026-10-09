@@ -1,0 +1,8 @@
+echo "hello    world"
+echo "hello""world"
+echo "hello"world
+echo "hello" "world"
+echo "shell's test"
+echo ""
+echo "$HOME *"
+exit

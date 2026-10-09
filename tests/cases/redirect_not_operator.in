@@ -1,0 +1,11 @@
+echo 'a > b'
+echo "a > b"
+echo a\>b
+echo '>'
+echo a1> g
+cat g
+echo 1 > h
+cat h
+echo x > 'file with  spaces'
+cat 'file with  spaces'
+exit

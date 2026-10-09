@@ -20,19 +20,22 @@ namespace
   }
 }
 
-StdoutRedirect::StdoutRedirect(const std::string &path)
+FdRedirect::FdRedirect(int fd, const std::string &path, bool append)
+    : fd_(fd)
 {
   std::cout.flush();
+  std::cerr.flush();
 
-  int file_fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+  int flags = O_WRONLY | O_CREAT | O_CLOEXEC | (append ? O_APPEND : O_TRUNC);
+  int file_fd = open(path.c_str(), flags, 0644);
   if (file_fd < 0)
   {
     error_ = path + ": " + std::strerror(errno);
     return;
   }
 
-  // Keep a copy of the original stdout; close-on-exec so children don't inherit it.
-  int saved_fd = fcntl(STDOUT_FILENO, F_DUPFD_CLOEXEC, 10);
+  // Keep a copy of the original fd; close-on-exec so children don't inherit it.
+  int saved_fd = fcntl(fd_, F_DUPFD_CLOEXEC, 10);
   if (saved_fd < 0)
   {
     error_ = std::string("fcntl: ") + std::strerror(errno);
@@ -40,7 +43,7 @@ StdoutRedirect::StdoutRedirect(const std::string &path)
     return;
   }
 
-  if (dup2_retry(file_fd, STDOUT_FILENO) < 0)
+  if (dup2_retry(file_fd, fd_) < 0)
   {
     error_ = std::string("dup2: ") + std::strerror(errno);
     close(saved_fd);
@@ -52,7 +55,7 @@ StdoutRedirect::StdoutRedirect(const std::string &path)
   saved_fd_ = saved_fd;
 }
 
-StdoutRedirect::~StdoutRedirect()
+FdRedirect::~FdRedirect()
 {
   if (saved_fd_ < 0)
   {
@@ -60,6 +63,7 @@ StdoutRedirect::~StdoutRedirect()
   }
 
   std::cout.flush();
-  dup2_retry(saved_fd_, STDOUT_FILENO);
+  std::cerr.flush();
+  dup2_retry(saved_fd_, fd_);
   close(saved_fd_);
 }

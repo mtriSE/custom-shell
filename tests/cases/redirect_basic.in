@@ -1,0 +1,13 @@
+echo hello > out.txt
+cat out.txt
+echo hello 1> out1.txt
+cat out1.txt
+echo hello>out2.txt
+cat out2.txt
+echo one > f
+echo two > f
+cat f
+type echo > t.txt
+cat t.txt
+echo visible after redirect
+exit

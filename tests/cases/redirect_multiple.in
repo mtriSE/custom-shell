@@ -1,0 +1,9 @@
+echo a > f1 > f2
+cat f1
+echo ---f2:
+cat f2
+echo back on terminal
+echo b > f3 > f4 > f5
+cat f3 f4 f5
+echo ---still terminal
+exit

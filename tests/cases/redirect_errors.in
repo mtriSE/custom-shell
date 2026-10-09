@@ -1,0 +1,9 @@
+cat nonexistent > err.txt
+cat err.txt
+echo hi >
+echo hi > > x
+echo hi > /nonexistent_dir/f
+nonexistent_cmd > nc.txt
+cat nc.txt
+echo still alive
+exit

@@ -30,18 +30,6 @@ namespace
     return {};
   }
 
-  BuiltinResult builtin_type(const Args &args);
-
-  const std::unordered_map<std::string, Handler> &registry()
-  {
-    static const std::unordered_map<std::string, Handler> builtins{
-        {"exit", builtin_exit},
-        {"echo", builtin_echo},
-        {"type", builtin_type},
-    };
-    return builtins;
-  }
-
   BuiltinResult builtin_type(const Args &args)
   {
     for (size_t i = 1; i < args.size(); ++i)
@@ -60,6 +48,17 @@ namespace
       }
     }
     return {};
+  }
+
+  // Keep last: add each new builtin_* above, then one line here.
+  const std::unordered_map<std::string, Handler> &registry()
+  {
+    static const std::unordered_map<std::string, Handler> builtins{
+        {"exit", builtin_exit},
+        {"echo", builtin_echo},
+        {"type", builtin_type},
+    };
+    return builtins;
   }
 }
 

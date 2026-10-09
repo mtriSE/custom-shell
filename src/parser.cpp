@@ -18,8 +18,11 @@ namespace
   struct Token
   {
     std::string text;
-    // An unquoted, unescaped `>` (or `1>`); `text` is unused.
+    // An unquoted, unescaped redirect operator; `text` is unused and
+    // `fd`/`append` describe it.
     bool is_redirect = false;
+    int fd = 1;
+    bool append = false;
   };
 
   class Tokenizer
@@ -183,7 +186,7 @@ namespace
         end_token();
       }
 
-      tokens_.push_back({"", true});
+      tokens_.push_back({"", true, 1, false});
     }
 
     // --- State --------------------------------------------------------------
@@ -215,7 +218,7 @@ std::optional<Command> parse_command(const std::string &input, std::string &erro
       continue;
     }
 
-    // `>` must be followed by a word, which is the target file.
+    // The operator must be followed by a word, which is the target file.
     bool has_target = i + 1 < tokens.size() && !tokens[i + 1].is_redirect;
     if (!has_target)
     {
@@ -225,8 +228,9 @@ std::optional<Command> parse_command(const std::string &input, std::string &erro
       return std::nullopt;
     }
 
-    // Consume the target word too (++i skips it in the loop). Last `>` wins.
-    command.stdout_redirect = Redirect{std::move(tokens[++i].text)};
+    // Consume the target word too (++i skips it in the loop).
+    command.redirects.push_back({tokens[i].fd, std::move(tokens[i + 1].text), tokens[i].append});
+    ++i;
   }
 
   return command;
