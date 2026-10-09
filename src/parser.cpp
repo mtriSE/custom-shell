@@ -8,10 +8,18 @@ std::vector<std::string> tokenize(const std::string &input)
   bool in_token = false;
   bool in_single = false;
   bool in_double = false;
+  // Set after an unquoted backslash: the next character is taken literally.
+  bool escape_next = false;
 
   for (char c : input)
   {
-    if (in_single)
+    if (escape_next)
+    {
+      current += c;
+      in_token = true;
+      escape_next = false;
+    }
+    else if (in_single)
     {
       if (c == '\'')
       {
@@ -32,6 +40,11 @@ std::vector<std::string> tokenize(const std::string &input)
       {
         current += c;
       }
+    }
+    else if (c == '\\')
+    {
+      escape_next = true;
+      in_token = true;
     }
     else if (c == '\'')
     {
