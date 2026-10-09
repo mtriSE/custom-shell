@@ -1,5 +1,7 @@
 #include "builtins.hpp"
 
+#include "path_utils.hpp"
+
 #include <functional>
 #include <iostream>
 #include <unordered_map>
@@ -47,6 +49,10 @@ namespace
       if (is_builtin(args[i]))
       {
         std::cout << args[i] << " is a shell builtin" << std::endl;
+      }
+      else if (auto path = find_in_path(args[i]))
+      {
+        std::cout << args[i] << " is " << path->string() << std::endl;
       }
       else
       {
