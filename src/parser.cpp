@@ -15,10 +15,17 @@ namespace
   // before anything else it stays a literal backslash.
   constexpr std::string_view DOUBLE_QUOTE_ESCAPES = "\"\\$`";
 
+  struct Token
+  {
+    std::string text;
+    // An unquoted, unescaped `>` (or `1>`); `text` is unused.
+    bool is_redirect = false;
+  };
+
   class Tokenizer
   {
   public:
-    std::vector<std::string> run(const std::string &input)
+    std::vector<Token> run(const std::string &input)
     {
       for (char c : input)
       {
@@ -81,16 +88,23 @@ namespace
       case '\\':
         escaped_ = true;
         in_token_ = true;
+        quoted_ = true;
         break;
 
       case '\'':
         state_ = State::SingleQuote;
         in_token_ = true;
+        quoted_ = true;
         break;
 
       case '"':
         state_ = State::DoubleQuote;
         in_token_ = true;
+        quoted_ = true;
+        break;
+
+      case '>':
+        start_redirect();
         break;
 
       case ' ':
@@ -149,24 +163,71 @@ namespace
         return;
       }
 
-      tokens_.push_back(std::move(current_));
+      tokens_.push_back({std::move(current_), false});
       current_.clear();
       in_token_ = false;
+      quoted_ = false;
+    }
+
+    // A plain `1` right before `>` is the fd number (`1>`), not an argument.
+    // Anything else pending (e.g. the `a` in `a>f`) is an argument of its own.
+    void start_redirect()
+    {
+      if (in_token_ && !quoted_ && current_ == "1")
+      {
+        current_.clear();
+        in_token_ = false;
+      }
+      else
+      {
+        end_token();
+      }
+
+      tokens_.push_back({"", true});
     }
 
     // --- State --------------------------------------------------------------
 
-    std::vector<std::string> tokens_;
+    std::vector<Token> tokens_;
     std::string current_;
     State state_ = State::Normal;
     // True once an argument has started, even if it is still empty (e.g. '').
     bool in_token_ = false;
+    // True if the current token used any quote or backslash.
+    bool quoted_ = false;
     // Set right after a backslash; its meaning depends on state_.
     bool escaped_ = false;
   };
 }
 
-std::vector<std::string> tokenize(const std::string &input)
+std::optional<Command> parse_command(const std::string &input, std::string &error)
 {
-  return Tokenizer{}.run(input);
+  // Split the line into words and `>` markers (quotes/escapes already resolved).
+  auto tokens = Tokenizer{}.run(input);
+
+  Command command;
+  for (size_t i = 0; i < tokens.size(); ++i)
+  {
+    // Plain word: it's an argument.
+    if (!tokens[i].is_redirect)
+    {
+      command.args.push_back(std::move(tokens[i].text));
+      continue;
+    }
+
+    // `>` must be followed by a word, which is the target file.
+    bool has_target = i + 1 < tokens.size() && !tokens[i + 1].is_redirect;
+    if (!has_target)
+    {
+      // Name the offending token like bash: another `>`, or end of line.
+      const char *unexpected = i + 1 < tokens.size() ? ">" : "newline";
+      error = std::string("syntax error near unexpected token `") + unexpected + "'";
+      return std::nullopt;
+    }
+
+    // Consume the target word too (++i skips it in the loop). Last `>` wins.
+    command.stdout_redirect = Redirect{std::move(tokens[++i].text)};
+  }
+
+  return command;
 }
