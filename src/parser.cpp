@@ -1,99 +1,172 @@
 #include "parser.hpp"
 
-std::vector<std::string> tokenize(const std::string &input)
-{
-  std::vector<std::string> tokens;
-  std::string current;
-  // True once an argument has started, even if it is still empty (e.g. '').
-  bool in_token = false;
-  // Inside '...': every character is literal.
-  bool in_single = false;
-  // Inside "...": characters are literal except backslash escapes.
-  bool in_double = false;
-  // Set after an unquoted backslash: the next character is taken literally.
-  bool escape_next = false;
-  // Set after a backslash inside double quotes.
-  bool escape_in_double = false;
+#include <string_view>
 
-  for (char c : input)
+namespace
+{
+  enum class State
   {
-    if (escape_next)
+    Normal,
+    SingleQuote,
+    DoubleQuote,
+  };
+
+  // Inside double quotes a backslash only escapes these characters;
+  // before anything else it stays a literal backslash.
+  constexpr std::string_view DOUBLE_QUOTE_ESCAPES = "\"\\$`";
+
+  class Tokenizer
+  {
+  public:
+    std::vector<std::string> run(const std::string &input)
     {
-      current += c;
-      in_token = true;
-      escape_next = false;
-    }
-    else if (escape_in_double)
-    {
-      // Inside double quotes a backslash only escapes these characters;
-      // before anything else it stays a literal backslash.
-      if (c != '"' && c != '\\' && c != '$' && c != '`')
+      for (char c : input)
       {
-        current += '\\';
+        feed(c);
       }
-      current += c;
-      escape_in_double = false;
+      end_token();
+
+      return std::move(tokens_);
     }
-    else if (in_single)
+
+  private:
+    // --- Character dispatch -------------------------------------------------
+
+    void feed(char c)
+    {
+      if (escaped_)
+      {
+        feed_escaped(c);
+        return;
+      }
+
+      switch (state_)
+      {
+      case State::Normal:
+        feed_normal(c);
+        break;
+
+      case State::SingleQuote:
+        feed_single_quote(c);
+        break;
+
+      case State::DoubleQuote:
+        feed_double_quote(c);
+        break;
+      }
+    }
+
+    // Character right after a backslash.
+    void feed_escaped(char c)
+    {
+      escaped_ = false;
+
+      bool keeps_backslash =
+          state_ == State::DoubleQuote &&
+          DOUBLE_QUOTE_ESCAPES.find(c) == std::string_view::npos;
+      if (keeps_backslash)
+      {
+        current_ += '\\';
+      }
+
+      append(c);
+    }
+
+    // --- Per-state handlers -------------------------------------------------
+
+    void feed_normal(char c)
+    {
+      switch (c)
+      {
+      case '\\':
+        escaped_ = true;
+        in_token_ = true;
+        break;
+
+      case '\'':
+        state_ = State::SingleQuote;
+        in_token_ = true;
+        break;
+
+      case '"':
+        state_ = State::DoubleQuote;
+        in_token_ = true;
+        break;
+
+      case ' ':
+      case '\t':
+        end_token();
+        break;
+
+      default:
+        append(c);
+        break;
+      }
+    }
+
+    // Everything is literal until the closing quote.
+    void feed_single_quote(char c)
     {
       if (c == '\'')
       {
-        in_single = false;
+        state_ = State::Normal;
       }
       else
       {
-        current += c;
+        current_ += c;
       }
     }
-    else if (in_double)
+
+    // Literal except for the closing quote and backslash escapes.
+    void feed_double_quote(char c)
     {
       if (c == '"')
       {
-        in_double = false;
+        state_ = State::Normal;
       }
       else if (c == '\\')
       {
-        escape_in_double = true;
+        escaped_ = true;
       }
       else
       {
-        current += c;
+        current_ += c;
       }
     }
-    else if (c == '\\')
-    {
-      escape_next = true;
-      in_token = true;
-    }
-    else if (c == '\'')
-    {
-      in_single = true;
-      in_token = true;
-    }
-    else if (c == '"')
-    {
-      in_double = true;
-      in_token = true;
-    }
-    else if (c == ' ' || c == '\t')
-    {
-      if (in_token)
-      {
-        tokens.push_back(current);
-        current.clear();
-        in_token = false;
-      }
-    }
-    else
-    {
-      current += c;
-      in_token = true;
-    }
-  }
 
-  if (in_token)
-  {
-    tokens.push_back(current);
-  }
-  return tokens;
+    // --- Token building -----------------------------------------------------
+
+    void append(char c)
+    {
+      current_ += c;
+      in_token_ = true;
+    }
+
+    void end_token()
+    {
+      if (!in_token_)
+      {
+        return;
+      }
+
+      tokens_.push_back(std::move(current_));
+      current_.clear();
+      in_token_ = false;
+    }
+
+    // --- State --------------------------------------------------------------
+
+    std::vector<std::string> tokens_;
+    std::string current_;
+    State state_ = State::Normal;
+    // True once an argument has started, even if it is still empty (e.g. '').
+    bool in_token_ = false;
+    // Set right after a backslash; its meaning depends on state_.
+    bool escaped_ = false;
+  };
+}
+
+std::vector<std::string> tokenize(const std::string &input)
+{
+  return Tokenizer{}.run(input);
 }
