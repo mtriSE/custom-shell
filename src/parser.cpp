@@ -6,10 +6,14 @@ std::vector<std::string> tokenize(const std::string &input)
   std::string current;
   // True once an argument has started, even if it is still empty (e.g. '').
   bool in_token = false;
+  // Inside '...': every character is literal.
   bool in_single = false;
+  // Inside "...": characters are literal except backslash escapes.
   bool in_double = false;
   // Set after an unquoted backslash: the next character is taken literally.
   bool escape_next = false;
+  // Set after a backslash inside double quotes.
+  bool escape_in_double = false;
 
   for (char c : input)
   {
@@ -18,6 +22,17 @@ std::vector<std::string> tokenize(const std::string &input)
       current += c;
       in_token = true;
       escape_next = false;
+    }
+    else if (escape_in_double)
+    {
+      // Inside double quotes a backslash only escapes these characters;
+      // before anything else it stays a literal backslash.
+      if (c != '"' && c != '\\' && c != '$' && c != '`')
+      {
+        current += '\\';
+      }
+      current += c;
+      escape_in_double = false;
     }
     else if (in_single)
     {
@@ -35,6 +50,10 @@ std::vector<std::string> tokenize(const std::string &input)
       if (c == '"')
       {
         in_double = false;
+      }
+      else if (c == '\\')
+      {
+        escape_in_double = true;
       }
       else
       {
