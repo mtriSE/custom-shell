@@ -1,0 +1,22 @@
+echo $?
+nonexistent_cmd
+echo $?
+ls nonexistent 2> /dev/null
+echo $?
+sh -c 'exit 7'
+echo $?
+type nope
+echo $?
+echo hi > /nonexistent_dir/x
+echo $?
+echo x >
+echo $?
+echo '$?'
+echo \$?
+echo "\$?"
+echo a$?b
+echo "$?"
+echo $?> f
+cat f
+echo $ $x
+exit

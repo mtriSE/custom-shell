@@ -32,6 +32,7 @@ namespace
 
   BuiltinResult builtin_type(const Args &args)
   {
+    BuiltinResult result;
     for (size_t i = 1; i < args.size(); ++i)
     {
       if (is_builtin(args[i]))
@@ -45,9 +46,10 @@ namespace
       else
       {
         std::cout << args[i] << ": not found" << std::endl;
+        result.status = 1;
       }
     }
-    return {};
+    return result;
   }
 
   // Keep last: add each new builtin_* above, then one line here.

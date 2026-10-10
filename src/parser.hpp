@@ -6,9 +6,10 @@
 
 struct Redirect
 {
-  int fd = 1; // 1 = stdout, 2 = stderr
+  int fd = 1; // 0-9; 1 = stdout, 2 = stderr
   std::string path;
   bool append = false; // false: `>` (truncate), true: `>>`
+  int dup_from = -1;   // >= 0: `>&N`, make `fd` a copy of this fd (no file)
 };
 
 struct Command
@@ -18,5 +19,6 @@ struct Command
   std::vector<Redirect> redirects;
 };
 
-// Parses one input line. On a syntax error returns std::nullopt and sets `error`.
-std::optional<Command> parse_command(const std::string &input, std::string &error);
+// Parses one input line; `last_status` is what `$?` expands to. On a syntax
+// error returns std::nullopt and sets `error`.
+std::optional<Command> parse_command(const std::string &input, int last_status, std::string &error);

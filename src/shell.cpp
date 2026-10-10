@@ -30,7 +30,9 @@ namespace
     // Returns false (with the reason in `error`) if the target can't be opened.
     bool apply(const Redirect &redirect, std::string &error)
     {
-      auto fd_redirect = std::make_unique<FdRedirect>(redirect.fd, redirect.path, redirect.append);
+      auto fd_redirect = redirect.dup_from >= 0
+                             ? std::make_unique<FdRedirect>(redirect.fd, redirect.dup_from)
+                             : std::make_unique<FdRedirect>(redirect.fd, redirect.path, redirect.append);
       if (!fd_redirect->ok())
       {
         error = fd_redirect->error();
@@ -45,8 +47,13 @@ namespace
     std::vector<std::unique_ptr<FdRedirect>> active_;
   };
 
-  // Returns true if the shell should exit.
-  bool run_command(const Command &command)
+  struct Outcome
+  {
+    bool exit = false; // the shell should exit
+    int status = 0;    // exit status, seen by the next command as `$?`
+  };
+
+  Outcome run_command(const Command &command)
   {
     // Applied before dispatch so it covers builtins, external programs and
     // unknown commands alike; undone when this function returns.
@@ -57,29 +64,29 @@ namespace
       if (!redirects.apply(redirect, error))
       {
         std::cerr << error << std::endl;
-        return false;
+        return {.status = 1};
       }
     }
 
     const auto &args = command.args;
     if (args.empty())
     {
-      return false;
+      return {};
     }
 
     if (is_builtin(args[0]))
     {
-      return run_builtin(args).should_exit;
+      auto result = run_builtin(args);
+      return {.exit = result.should_exit, .status = result.status};
     }
 
     if (auto exe = find_in_path(args[0]))
     {
-      execute(*exe, args);
-      return false;
+      return {.status = execute(*exe, args)};
     }
 
     std::cerr << args[0] << ": command not found" << std::endl;
-    return false;
+    return {.status = 127};
   }
 }
 
@@ -96,14 +103,17 @@ void Shell::run()
     }
 
     std::string error;
-    auto command = parse_command(input, error);
+    auto command = parse_command(input, last_status_, error);
     if (!command)
     {
       std::cerr << error << std::endl;
+      last_status_ = 2;
       continue;
     }
 
-    if (run_command(*command))
+    Outcome outcome = run_command(*command);
+    last_status_ = outcome.status;
+    if (outcome.exit)
     {
       break;
     }

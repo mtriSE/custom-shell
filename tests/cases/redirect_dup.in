@@ -1,0 +1,18 @@
+ls nonexistent > o1 2>&1
+cat o1
+ls nonexistent 2>&1 > o2
+cat o2
+echo back1
+echo to-err >&2 2> e1
+cat e1
+echo x 1>&2
+type nope > o3 2>&1
+cat o3
+echo '2>&1'
+echo a2>&1
+echo b >& 2
+echo x 2>&
+echo x 2>&abc
+echo x 2>&9
+echo back2
+exit

@@ -6,6 +6,7 @@
 struct BuiltinResult
 {
   bool should_exit = false;
+  int status = 0; // becomes `$?`
 };
 
 bool is_builtin(const std::string &name);

@@ -1,0 +1,15 @@
+sh -c 'echo to3 >&3' 3> f3
+cat f3
+sh -c 'echo more >&3' 3>> f3
+cat f3
+sh -c 'echo x >&3' 3>&1
+sh -c 'echo y >&3'
+echo 3 > g
+cat g
+echo a3> h
+cat h
+echo x 10> h
+echo '3'> k
+cat k
+echo back
+exit

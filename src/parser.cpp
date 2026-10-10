@@ -1,5 +1,6 @@
 #include "parser.hpp"
 
+#include <algorithm>
 #include <string_view>
 
 namespace
@@ -15,19 +16,57 @@ namespace
   // before anything else it stays a literal backslash.
   constexpr std::string_view DOUBLE_QUOTE_ESCAPES = "\"\\$`";
 
+  // fds above this are reserved: the shell keeps its saved copies from fd 10 up.
+  constexpr int MAX_FD = 9;
+
+  // The value of a string made only of digits (capped, so it can't overflow).
+  std::optional<int> fd_from_digits(const std::string &text)
+  {
+    if (text.empty())
+    {
+      return std::nullopt;
+    }
+
+    int value = 0;
+    for (char c : text)
+    {
+      if (c < '0' || c > '9')
+      {
+        return std::nullopt;
+      }
+      value = std::min(value * 10 + (c - '0'), 999999);
+    }
+    return value;
+  }
+
+  // Rejects fds the shell reserves for itself.
+  bool valid_fd(int fd, std::string &error)
+  {
+    if (fd > MAX_FD)
+    {
+      error = std::to_string(fd) + ": Bad file descriptor";
+      return false;
+    }
+    return true;
+  }
+
   struct Token
   {
     std::string text;
     // An unquoted, unescaped redirect operator; `text` is unused and
-    // `fd`/`append` describe it.
+    // `fd`/`append`/`dup` describe it.
     bool is_redirect = false;
     int fd = 1;
     bool append = false;
+    // `>&`: the following word is an fd to copy, not a file.
+    bool dup = false;
   };
 
   class Tokenizer
   {
   public:
+    explicit Tokenizer(int last_status) : last_status_(last_status) {}
+
     std::vector<Token> run(const std::string &input)
     {
       input_ = input;
@@ -107,6 +146,13 @@ namespace
         quoted_ = true;
         break;
 
+      case '$':
+        if (!expand_status())
+        {
+          append('$');
+        }
+        break;
+
       case '>':
         start_redirect();
         break;
@@ -146,6 +192,10 @@ namespace
       {
         escaped_ = true;
       }
+      else if (c == '$' && expand_status())
+      {
+        // `$?` already appended.
+      }
       else
       {
         current_ += c;
@@ -173,21 +223,44 @@ namespace
       quoted_ = false;
     }
 
+    // At a `$` that is followed by `?`, appends the last exit status and
+    // consumes the `?`. Marked quoted_ so the digits can never be read as an
+    // fd number (`echo $?>f` redirects stdout, like bash).
+    bool expand_status()
+    {
+      if (!next_is('?'))
+      {
+        return false;
+      }
+
+      current_ += std::to_string(last_status_);
+      in_token_ = true;
+      quoted_ = true;
+      ++pos_;
+      return true;
+    }
+
     // True if the character right after the one being fed is `c`.
     bool next_is(char c) const
     {
       return pos_ + 1 < input_.size() && input_[pos_ + 1] == c;
     }
 
-    // A plain `1` or `2` right before `>` is the fd number (`2>`), not an argument.
+    // A plain number right before `>` is the fd (`2>`, `3>`), not an argument.
     // Anything else pending (e.g. the `a` in `a>f`) is an argument of its own.
-    // `>>`, `1>>` and `2>>` append instead of truncating.
+    // `>>`, `1>>` and `2>>` append instead of truncating; `>&` copies an fd.
     void start_redirect()
     {
       int fd = 1;
-      if (in_token_ && !quoted_ && (current_ == "1" || current_ == "2"))
+      std::optional<int> number;
+      if (in_token_ && !quoted_)
       {
-        fd = current_[0] - '0';
+        number = fd_from_digits(current_);
+      }
+
+      if (number)
+      {
+        fd = *number;
         current_.clear();
         in_token_ = false;
       }
@@ -203,7 +276,14 @@ namespace
         ++pos_; // consume the second `>`
       }
 
-      tokens_.push_back({"", true, fd, append});
+      // `>&1`: the word after it is an fd to copy. (`>>&` is not supported.)
+      bool dup = !append && next_is('&');
+      if (dup)
+      {
+        ++pos_; // consume the `&`
+      }
+
+      tokens_.push_back({"", true, fd, append, dup});
     }
 
     // --- State --------------------------------------------------------------
@@ -211,23 +291,24 @@ namespace
     // The whole line and the index of the char being fed, for one-char lookahead.
     std::string input_;
     size_t pos_ = 0;
+    int last_status_;
 
     std::vector<Token> tokens_;
     std::string current_;
     State state_ = State::Normal;
     // True once an argument has started, even if it is still empty (e.g. '').
     bool in_token_ = false;
-    // True if the current token used any quote or backslash.
+    // True if the current token used any quote, backslash or expansion.
     bool quoted_ = false;
     // Set right after a backslash; its meaning depends on state_.
     bool escaped_ = false;
   };
 }
 
-std::optional<Command> parse_command(const std::string &input, std::string &error)
+std::optional<Command> parse_command(const std::string &input, int last_status, std::string &error)
 {
   // Split the line into words and `>` markers (quotes/escapes already resolved).
-  auto tokens = Tokenizer{}.run(input);
+  auto tokens = Tokenizer{last_status}.run(input);
 
   Command command;
   for (size_t i = 0; i < tokens.size(); ++i)
@@ -249,9 +330,36 @@ std::optional<Command> parse_command(const std::string &input, std::string &erro
       return std::nullopt;
     }
 
-    // Consume the target word too (++i skips it in the loop).
-    command.redirects.push_back({tokens[i].fd, std::move(tokens[i + 1].text), tokens[i].append});
-    ++i;
+    Redirect redirect{.fd = tokens[i].fd, .append = tokens[i].append};
+    std::string &target = tokens[i + 1].text;
+
+    if (!valid_fd(redirect.fd, error))
+    {
+      return std::nullopt;
+    }
+
+    if (tokens[i].dup)
+    {
+      // `2>&1`: the target must be the number of an fd to copy.
+      auto from = fd_from_digits(target);
+      if (!from)
+      {
+        error = target + ": Bad fd number";
+        return std::nullopt;
+      }
+      if (!valid_fd(*from, error))
+      {
+        return std::nullopt;
+      }
+      redirect.dup_from = *from;
+    }
+    else
+    {
+      redirect.path = std::move(target);
+    }
+
+    command.redirects.push_back(std::move(redirect));
+    ++i; // the target word is consumed too
   }
 
   return command;
