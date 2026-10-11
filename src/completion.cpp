@@ -10,8 +10,8 @@
 #include <filesystem>
 #include <iterator>
 #include <readline/readline.h>
+#include <sstream>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace
@@ -49,16 +49,22 @@ namespace
     return names;
   }
 
-  // First word of the line being edited, i.e. the command.
-  std::string command_word()
+  // Whitespace-separated words of the line before the word being completed.
+  std::vector<std::string> words_before(int start)
   {
-    std::string_view line = rl_line_buffer;
-    line.remove_prefix(std::min(line.find_first_not_of(" \t"), line.size()));
-    return std::string(line.substr(0, line.find_first_of(" \t")));
+    std::istringstream stream(std::string(rl_line_buffer, start));
+    std::vector<std::string> words;
+    for (std::string word; stream >> word;)
+    {
+      words.push_back(std::move(word));
+    }
+    return words;
   }
 
-  // Candidates printed by a script registered with `complete -C`.
-  std::vector<std::string> run_completer(const std::string &script)
+  // Candidates printed by a script registered with `complete -C`. It is called
+  // as `script <command> <word being completed> <previous word>`.
+  std::vector<std::string> run_completer(const std::string &script, const std::string &command,
+                                         const std::string &word, const std::string &previous)
   {
     std::filesystem::path exe = script;
     if (script.find('/') == std::string::npos)
@@ -70,21 +76,23 @@ namespace
       }
       exe = *found;
     }
-    return capture_lines(exe, {script});
+    return capture_lines(exe, {script, command, word, previous});
   }
 
   char **attempt_completion(const char *text, int start, int /*end*/)
   {
-    if (start == 0)
+    const auto words = words_before(start);
+    if (words.empty())
     {
       // Command position: only command names, never filenames.
       candidates = command_names(text);
     }
-    else if (auto script = find_completer(command_word()))
+    else if (auto script = find_completer(words[0]))
     {
       // A registered completer owns this command's arguments, so no filename
-      // fallback even if it prints nothing.
-      candidates = run_completer(*script);
+      // fallback even if it prints nothing. The command itself doesn't count
+      // as the previous word.
+      candidates = run_completer(*script, words[0], text, words.size() > 1 ? words.back() : "");
     }
     else
     {
