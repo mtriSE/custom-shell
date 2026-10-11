@@ -1,14 +1,20 @@
 #include "shell.hpp"
 
 #include "builtins.hpp"
+#include "completion.hpp"
 #include "executor.hpp"
 #include "parser.hpp"
 #include "path_utils.hpp"
 #include "redirect.hpp"
 
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <readline/history.h>
+#include <readline/readline.h>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 namespace
@@ -53,6 +59,30 @@ namespace
     int status = 0;    // exit status, seen by the next command as `$?`
   };
 
+  // Returns false on EOF. Readline only on a tty: with piped stdin it would
+  // echo the input and break tests/run.sh.
+  bool read_line(std::string &out)
+  {
+    if (!isatty(STDIN_FILENO))
+    {
+      std::cout << "$ ";
+      return static_cast<bool>(std::getline(std::cin, out));
+    }
+
+    char *line = readline("$ ");
+    if (line == nullptr)
+    {
+      return false;
+    }
+    if (*line != '\0')
+    {
+      add_history(line);
+    }
+    out = line;
+    free(line);
+    return true;
+  }
+
   Outcome run_command(const Command &command)
   {
     // Applied before dispatch so it covers builtins, external programs and
@@ -92,12 +122,14 @@ namespace
 
 void Shell::run()
 {
+  init_completion();
+  // No bracketed-paste escape sequences in the output.
+  rl_variable_bind("enable-bracketed-paste", "off");
+
   while (true)
   {
-    std::cout << "$ ";
-
     std::string input;
-    if (!std::getline(std::cin, input))
+    if (!read_line(input))
     {
       break;
     }

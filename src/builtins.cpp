@@ -2,6 +2,7 @@
 
 #include "path_utils.hpp"
 
+#include <algorithm>
 #include <functional>
 #include <iostream>
 #include <unordered_map>
@@ -67,6 +68,17 @@ namespace
 bool is_builtin(const std::string &name)
 {
   return registry().contains(name);
+}
+
+std::vector<std::string> builtin_names()
+{
+  std::vector<std::string> names;
+  for (const auto &entry : registry())
+  {
+    names.push_back(entry.first);
+  }
+  std::ranges::sort(names);
+  return names;
 }
 
 BuiltinResult run_builtin(const std::vector<std::string> &args)
