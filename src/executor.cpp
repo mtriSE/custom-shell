@@ -1,6 +1,7 @@
 #include "executor.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 
 #include <sys/wait.h>
 #include <unistd.h>
@@ -49,7 +50,8 @@ int execute(const std::filesystem::path &exe, const std::vector<std::string> &ar
 }
 
 std::vector<std::string> capture_lines(const std::filesystem::path &exe,
-                                       const std::vector<std::string> &args)
+                                       const std::vector<std::string> &args,
+                                       const Env &env)
 {
   std::vector<std::string> storage = args;
   std::vector<char *> argv = build_argv(storage);
@@ -75,6 +77,10 @@ std::vector<std::string> capture_lines(const std::filesystem::path &exe,
     dup2(fds[1], STDOUT_FILENO);
     close(fds[0]);
     close(fds[1]);
+    for (const auto &[name, value] : env)
+    {
+      setenv(name.c_str(), value.c_str(), 1);
+    }
     execv(exe.c_str(), argv.data());
     perror(exe.c_str());
     _exit(127);

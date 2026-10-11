@@ -62,7 +62,8 @@ namespace
   }
 
   // Candidates printed by a script registered with `complete -C`. It is called
-  // as `script <command> <word being completed> <previous word>`.
+  // as `script <command> <word being completed> <previous word>`, with the whole
+  // line and the cursor's byte offset in COMP_LINE and COMP_POINT.
   std::vector<std::string> run_completer(const std::string &script, const std::string &command,
                                          const std::string &word, const std::string &previous)
   {
@@ -76,7 +77,8 @@ namespace
       }
       exe = *found;
     }
-    return capture_lines(exe, {script, command, word, previous});
+    const Env env = {{"COMP_LINE", rl_line_buffer}, {"COMP_POINT", std::to_string(rl_point)}};
+    return capture_lines(exe, {script, command, word, previous}, env);
   }
 
   char **attempt_completion(const char *text, int start, int /*end*/)
