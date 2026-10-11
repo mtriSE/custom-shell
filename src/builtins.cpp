@@ -1,5 +1,6 @@
 #include "builtins.hpp"
 
+#include "completer_registry.hpp"
 #include "path_utils.hpp"
 
 #include <algorithm>
@@ -53,17 +54,64 @@ namespace
     return result;
   }
 
-  // Only `-p` so far; `-C <script> <command>` comes in a later stage.
+  // Wraps in single quotes; an embedded ' becomes '\'' (as bash prints it).
+  std::string quote_single(const std::string &text)
+  {
+    std::string quoted = "'";
+    for (char c : text)
+    {
+      quoted += (c == '\'') ? "'\\''" : std::string(1, c);
+    }
+    return quoted + "'";
+  }
+
+  void print_completer(const std::string &command, const std::string &script)
+  {
+    std::cout << "complete -C " << quote_single(script) << ' ' << command << std::endl;
+  }
+
+  // Supports `-C <script> <command>...` and `-p [command...]`.
   BuiltinResult builtin_complete(const Args &args)
   {
     BuiltinResult result;
-    if (args.size() >= 2 && args[1] == "-p")
+    if (args.size() < 2)
     {
+      return result;
+    }
+
+    if (args[1] == "-C")
+    {
+      if (args.size() == 2)
+      {
+        std::cerr << "complete: -C: option requires an argument" << std::endl;
+        result.status = 2;
+        return result;
+      }
+      for (size_t i = 3; i < args.size(); ++i)
+      {
+        set_completer(args[i], args[2]);
+      }
+    }
+    else if (args[1] == "-p")
+    {
+      if (args.size() == 2)
+      {
+        for (const auto &[command, script] : all_completers())
+        {
+          print_completer(command, script);
+        }
+      }
       for (size_t i = 2; i < args.size(); ++i)
       {
-        // No specs are stored yet, so every lookup fails.
-        std::cerr << "complete: " << args[i] << ": no completion specification" << std::endl;
-        result.status = 1;
+        if (auto script = find_completer(args[i]))
+        {
+          print_completer(args[i], *script);
+        }
+        else
+        {
+          std::cerr << "complete: " << args[i] << ": no completion specification" << std::endl;
+          result.status = 1;
+        }
       }
     }
     return result;

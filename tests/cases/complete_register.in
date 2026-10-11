@@ -1,0 +1,14 @@
+complete   -C    /path/to/git/completer   git
+echo registered $?
+complete -p git
+complete -C /path/to/docker/completer docker
+complete -p docker
+complete -p git docker nope
+echo $?
+complete -C /other/git git
+complete -p git
+complete -p
+complete -C "/a'b" quoted
+complete -p quoted
+complete -C
+echo $?
