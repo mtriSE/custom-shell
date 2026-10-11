@@ -53,6 +53,12 @@ namespace
     return result;
   }
 
+  // Stub: only registered so far; `-C <script> <command>` comes in a later stage.
+  BuiltinResult builtin_complete(const Args &)
+  {
+    return {};
+  }
+
   // Keep last: add each new builtin_* above, then one line here.
   const std::unordered_map<std::string, Handler> &registry()
   {
@@ -60,6 +66,7 @@ namespace
         {"exit", builtin_exit},
         {"echo", builtin_echo},
         {"type", builtin_type},
+        {"complete", builtin_complete},
     };
     return builtins;
   }
