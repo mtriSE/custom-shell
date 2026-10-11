@@ -1,5 +1,6 @@
 #pragma once
 
-// Hooks command-name completion (builtins and executables in $PATH) into
-// readline. Call once before readline().
-void init_completion();
+// Configures readline: command-name completion (builtins and executables in
+// $PATH), filename completion for arguments, no bracketed paste. Call once
+// before readline().
+void init_readline();

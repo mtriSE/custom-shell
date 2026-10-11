@@ -7,7 +7,6 @@
 #include "path_utils.hpp"
 #include "redirect.hpp"
 
-#include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -122,9 +121,7 @@ namespace
 
 void Shell::run()
 {
-  init_completion();
-  // No bracketed-paste escape sequences in the output.
-  rl_variable_bind("enable-bracketed-paste", "off");
+  init_readline();
 
   while (true)
   {

@@ -4,8 +4,6 @@
 #include "path_utils.hpp"
 
 #include <algorithm>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <readline/readline.h>
@@ -57,7 +55,9 @@ namespace
   }
 }
 
-void init_completion()
+void init_readline()
 {
   rl_attempted_completion_function = attempt_completion;
+  // No bracketed-paste escape sequences in the output.
+  rl_variable_bind("enable-bracketed-paste", "off");
 }
