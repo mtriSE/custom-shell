@@ -45,10 +45,15 @@ namespace
 
   char **attempt_completion(const char *text, int start, int /*end*/)
   {
-    // Stops readline falling back to filename completion on a nullptr result.
-    rl_attempted_completion_over = 1;
+    // Arguments: nullptr makes readline fall back to filename completion.
+    if (start != 0)
+    {
+      return nullptr;
+    }
 
-    return start == 0 ? rl_completion_matches(text, command_generator) : nullptr;
+    // Command position: only command names, never filenames.
+    rl_attempted_completion_over = 1;
+    return rl_completion_matches(text, command_generator);
   }
 }
 
