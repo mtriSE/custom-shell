@@ -1,0 +1,7 @@
+complete -p git
+echo $?
+complete -p a b
+complete -p
+echo $?
+complete -p x 2>/dev/null
+echo end

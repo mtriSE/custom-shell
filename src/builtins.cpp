@@ -53,10 +53,20 @@ namespace
     return result;
   }
 
-  // Stub: only registered so far; `-C <script> <command>` comes in a later stage.
-  BuiltinResult builtin_complete(const Args &)
+  // Only `-p` so far; `-C <script> <command>` comes in a later stage.
+  BuiltinResult builtin_complete(const Args &args)
   {
-    return {};
+    BuiltinResult result;
+    if (args.size() >= 2 && args[1] == "-p")
+    {
+      for (size_t i = 2; i < args.size(); ++i)
+      {
+        // No specs are stored yet, so every lookup fails.
+        std::cerr << "complete: " << args[i] << ": no completion specification" << std::endl;
+        result.status = 1;
+      }
+    }
+    return result;
   }
 
   // Keep last: add each new builtin_* above, then one line here.
