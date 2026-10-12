@@ -58,8 +58,9 @@ namespace
 
 int add_job(pid_t pid, std::string command)
 {
-  static int next_number = 1;
-  int number = next_number++;
+  // Highest number in the table + 1, or 1 when it's empty. Jobs are only ever
+  // appended with that number, so the last one always holds the highest.
+  int number = jobs().empty() ? 1 : jobs().back().number + 1;
   jobs().push_back({number, pid, std::move(command)});
   return number;
 }

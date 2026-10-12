@@ -5,7 +5,8 @@
 
 // Background jobs started with a trailing `&`.
 
-// Numbers go 1, 2, 3... and are never reused. `command` is the line as typed,
+// A new job gets one more than the highest number still in the table (1 if
+// it's empty), so numbers of finished jobs are reused. `command` is the line as typed,
 // including the trailing `&`. Returns the new job's number.
 int add_job(pid_t pid, std::string command);
 
