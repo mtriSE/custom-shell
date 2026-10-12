@@ -5,6 +5,7 @@
 #include "path_utils.hpp"
 
 #include <algorithm>
+#include <filesystem>
 #include <functional>
 #include <iostream>
 #include <unordered_map>
@@ -149,6 +150,20 @@ namespace
     return {};
   }
 
+  // Prints the physical working directory (getcwd), which is always absolute.
+  BuiltinResult builtin_pwd(const Args &)
+  {
+    std::error_code ec;
+    const auto cwd = std::filesystem::current_path(ec);
+    if (ec)
+    {
+      std::cerr << "pwd: " << ec.message() << std::endl;
+      return {.status = 1};
+    }
+    std::cout << cwd.string() << std::endl;
+    return {};
+  }
+
   // `[1]+  Running                 sleep 10 &`; see print_jobs().
   BuiltinResult builtin_jobs(const Args &)
   {
@@ -165,6 +180,7 @@ namespace
         {"type", builtin_type},
         {"complete", builtin_complete},
         {"jobs", builtin_jobs},
+        {"pwd", builtin_pwd},
     };
     return builtins;
   }
