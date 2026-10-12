@@ -3,6 +3,7 @@
 #include "builtins.hpp"
 #include "completion.hpp"
 #include "executor.hpp"
+#include "job_table.hpp"
 #include "parser.hpp"
 #include "path_utils.hpp"
 #include "redirect.hpp"
@@ -152,7 +153,10 @@ void Shell::run()
     if (outcome.job_pid > 0)
     {
       // Printed here, after the command's redirects have been undone.
-      std::cout << '[' << next_job_number_++ << "] " << outcome.job_pid << std::endl;
+      const auto first = input.find_first_not_of(" \t");
+      const auto last = input.find_last_not_of(" \t");
+      int number = add_job(outcome.job_pid, input.substr(first, last - first + 1));
+      std::cout << '[' << number << "] " << outcome.job_pid << std::endl;
     }
     if (outcome.exit)
     {

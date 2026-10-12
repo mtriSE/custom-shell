@@ -1,10 +1,12 @@
 #include "builtins.hpp"
 
 #include "completer_registry.hpp"
+#include "job_table.hpp"
 #include "path_utils.hpp"
 
 #include <algorithm>
 #include <functional>
+#include <iomanip>
 #include <iostream>
 #include <unordered_map>
 
@@ -148,9 +150,17 @@ namespace
     return {};
   }
 
-  // Stub: there is no job table yet, so there is never anything to list.
+  // `[1]+  Running                 sleep 10 &`: `+` marks the newest job, `-` the
+  // one before it.
   BuiltinResult builtin_jobs(const Args &)
   {
+    const auto &jobs = all_jobs();
+    for (size_t i = 0; i < jobs.size(); ++i)
+    {
+      const char marker = i + 1 == jobs.size() ? '+' : i + 2 == jobs.size() ? '-' : ' ';
+      std::cout << '[' << jobs[i].number << ']' << marker << "  " << std::left << std::setw(24)
+                << "Running" << jobs[i].command << std::endl;
+    }
     return {};
   }
 
