@@ -1,0 +1,13 @@
+complete -C /path/git/completer git
+complete -C /path/docker/completer docker
+complete -r git
+echo removed $?
+complete -p git
+echo $?
+complete -p docker
+complete -r nope
+echo nope $?
+complete -r
+complete -p docker
+complete -p
+echo end $?

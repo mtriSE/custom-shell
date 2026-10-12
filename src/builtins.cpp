@@ -70,7 +70,7 @@ namespace
     std::cout << "complete -C " << quote_single(script) << ' ' << command << std::endl;
   }
 
-  // Supports `-C <script> <command>...` and `-p [command...]`.
+  // Supports `-C <script> <command>...`, `-p [command...]` and `-r [command...]`.
   BuiltinResult builtin_complete(const Args &args)
   {
     BuiltinResult result;
@@ -90,6 +90,19 @@ namespace
       for (size_t i = 3; i < args.size(); ++i)
       {
         set_completer(args[i], args[2]);
+      }
+    }
+    else if (args[1] == "-r")
+    {
+      // Silent, and removing a command that has no completer is not an error.
+      // Without names it removes every completer, as in bash.
+      if (args.size() == 2)
+      {
+        clear_completers();
+      }
+      for (size_t i = 2; i < args.size(); ++i)
+      {
+        remove_completer(args[i]);
       }
     }
     else if (args[1] == "-p")

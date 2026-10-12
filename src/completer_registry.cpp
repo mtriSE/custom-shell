@@ -24,6 +24,16 @@ std::optional<std::string> find_completer(const std::string &command)
   return it->second;
 }
 
+void remove_completer(const std::string &command)
+{
+  completers().erase(command);
+}
+
+void clear_completers()
+{
+  completers().clear();
+}
+
 const std::map<std::string, std::string> &all_completers()
 {
   return completers();
