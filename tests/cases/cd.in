@@ -1,0 +1,11 @@
+cd /
+pwd
+cd /usr
+pwd
+cd /does_not_exist
+echo $?
+pwd
+cd /etc/passwd
+echo $?
+pwd
+type cd

@@ -5,9 +5,12 @@
 #include "path_utils.hpp"
 
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <iostream>
+#include <unistd.h>
 #include <unordered_map>
 
 namespace
@@ -164,6 +167,22 @@ namespace
     return {};
   }
 
+  // cd <dir>: just chdir(2), so the kernel resolves absolute and relative paths
+  // and the error text comes from errno. The directory is unchanged on failure.
+  BuiltinResult builtin_cd(const Args &args)
+  {
+    if (args.size() < 2)
+    {
+      return {}; // bare `cd` (go to $HOME) is not supported yet
+    }
+    if (chdir(args[1].c_str()) != 0)
+    {
+      std::cerr << "cd: " << args[1] << ": " << std::strerror(errno) << std::endl;
+      return {.status = 1};
+    }
+    return {};
+  }
+
   // `[1]+  Running                 sleep 10 &`; see print_jobs().
   BuiltinResult builtin_jobs(const Args &)
   {
@@ -181,6 +200,7 @@ namespace
         {"complete", builtin_complete},
         {"jobs", builtin_jobs},
         {"pwd", builtin_pwd},
+        {"cd", builtin_cd},
     };
     return builtins;
   }
