@@ -7,10 +7,12 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <iterator>
 #include <readline/readline.h>
+#include <readline/tilde.h>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -91,9 +93,15 @@ namespace
     for (int i = 1; i <= count; ++i)
     {
       const char *entry = matches[i];
+      bool is_dir = false;
       if (rl_filename_completion_desired)
       {
-        // Filenames are listed without their directory, as readline does.
+        // Filenames are listed without their directory, and directories get a
+        // trailing '/', as readline does.
+        char *expanded = tilde_expand(entry);
+        std::error_code ec;
+        is_dir = std::filesystem::is_directory(expanded, ec);
+        free(expanded);
         if (const char *slash = strrchr(entry, '/'))
         {
           entry = slash + 1;
@@ -101,6 +109,10 @@ namespace
       }
       fputs(i > 1 ? "  " : "", rl_outstream);
       fputs(entry, rl_outstream);
+      if (is_dir)
+      {
+        fputc('/', rl_outstream);
+      }
     }
     fputc('\n', rl_outstream);
     fflush(rl_outstream);
@@ -119,9 +131,9 @@ namespace
     else if (auto script = find_completer(words[0]))
     {
       // A registered completer owns this command's arguments, so no filename
-      // fallback even if it prints nothing. The command itself doesn't count
-      // as the previous word.
-      candidates = run_completer(*script, words[0], text, words.size() > 1 ? words.back() : "");
+      // fallback even if it prints nothing. For the first argument the
+      // previous word is the command itself, as in bash.
+      candidates = run_completer(*script, words[0], text, words.back());
     }
     else
     {
