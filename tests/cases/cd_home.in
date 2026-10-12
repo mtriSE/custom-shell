@@ -1,0 +1,13 @@
+cd /
+cd ~
+pwd
+cd /
+cd
+pwd
+cd /
+cd ~/bin
+pwd
+cd ~/does_not_exist
+echo $?
+cd ~someone
+pwd

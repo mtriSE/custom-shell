@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs every tests/cases/*.in through ./build/shell (stdout+stderr merged) in a
-# scratch directory and diffs the result against the matching .out file.
+# scratch directory (with HOME=/usr) and diffs the result against the matching .out file.
 # Usage: tests/run.sh [--update]   (--update rewrites the .out files)
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="$ROOT/build/shell"
@@ -13,7 +13,7 @@ fail=0
 for input in "$CASES"/*.in; do
   name="$(basename "$input" .in)"
   work="$(mktemp -d)"
-  (cd "$work" && "$BIN" < "$input" > actual.txt 2>&1)
+  (cd "$work" && HOME=/usr "$BIN" < "$input" > actual.txt 2>&1)
 
   if [ "$update" = 1 ]; then
     cp "$work/actual.txt" "$CASES/$name.out"

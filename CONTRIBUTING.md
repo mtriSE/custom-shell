@@ -1,24 +1,20 @@
 # Contributing / Source Guide
 
-This is a shell written in C++23 for the CodeCrafters "Build Your Own Shell"
-challenge. This document explains how the code is organised, how one input line
-flows through it, and how to add features without breaking the existing design.
+This is a shell written in C++23. This document explains how the code is
+organised, how one input line flows through it, and how to add features without
+breaking the existing design.
 
 ## 1. Build, run, test
 
 ```sh
-./your_program.sh          # cmake configure + build, then run build/shell
+./run.sh                   # cmake configure + build, then run build/shell
 tests/run.sh               # run every test case (needs build/shell to exist)
 tests/run.sh --update      # overwrite the .out files with the current output
 ```
 
-- `your_program.sh` needs the `VCPKG_ROOT` environment variable. The project
-  links against `readline`.
+- The project links against `readline`.
 - `CMakeLists.txt` uses `GLOB_RECURSE src/*.cpp`, so **add a new file under
   `src/` and re-run cmake**; no file list to edit.
-- `codecrafters submit` pushes the code to CodeCrafters for grading. The remote
-  build uses `.codecrafters/compile.sh` and `.codecrafters/run.sh`, not
-  `your_program.sh`.
 
 ### Test cases
 

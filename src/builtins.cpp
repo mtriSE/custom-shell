@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <functional>
@@ -167,17 +168,32 @@ namespace
     return {};
   }
 
-  // cd <dir>: just chdir(2), so the kernel resolves absolute and relative paths
-  // and the error text comes from errno. The directory is unchanged on failure.
+  // `~` or `~/rest` becomes $HOME or $HOME/rest. Anything else (including
+  // `~user`) is left alone, as is `~` when HOME is unset or empty. Only `cd`
+  // does this, not the shell in general, and quotes are already gone by now.
+  std::string expand_tilde(const std::string &path)
+  {
+    if (path != "~" && !path.starts_with("~/"))
+    {
+      return path;
+    }
+    const char *home = std::getenv("HOME");
+    if (home == nullptr || *home == '\0')
+    {
+      return path;
+    }
+    return home + path.substr(1);
+  }
+
+  // cd [dir]: chdir(2), so the kernel resolves absolute and relative paths and
+  // the error text comes from errno. Bare `cd` goes to $HOME, extra arguments
+  // are ignored. The directory is unchanged on failure.
   BuiltinResult builtin_cd(const Args &args)
   {
-    if (args.size() < 2)
+    const std::string target = expand_tilde(args.size() < 2 ? "~" : args[1]);
+    if (chdir(target.c_str()) != 0)
     {
-      return {}; // bare `cd` (go to $HOME) is not supported yet
-    }
-    if (chdir(args[1].c_str()) != 0)
-    {
-      std::cerr << "cd: " << args[1] << ": " << std::strerror(errno) << std::endl;
+      std::cerr << "cd: " << target << ": " << std::strerror(errno) << std::endl;
       return {.status = 1};
     }
     return {};
