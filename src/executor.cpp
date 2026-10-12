@@ -21,6 +21,15 @@ namespace
   }
 }
 
+void exec_replace(const std::filesystem::path &exe, const std::vector<std::string> &args)
+{
+  std::vector<std::string> storage = args;
+  std::vector<char *> argv = build_argv(storage);
+  execv(exe.c_str(), argv.data());
+  perror(exe.c_str());
+  _exit(127);
+}
+
 int execute(const std::filesystem::path &exe, const std::vector<std::string> &args)
 {
   std::vector<std::string> storage = args;

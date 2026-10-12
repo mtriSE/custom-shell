@@ -1,0 +1,5 @@
+cat f |
+| cat
+echo a || echo b
+echo $?
+echo 'a|b' "c|d" e\|f

@@ -62,6 +62,8 @@ namespace
     bool dup = false;
     // A word that used any quote, backslash or expansion.
     bool quoted = false;
+    // An unquoted, unescaped `|`; `text` is unused.
+    bool is_pipe = false;
   };
 
   class Tokenizer
@@ -157,6 +159,11 @@ namespace
 
       case '>':
         start_redirect();
+        break;
+
+      case '|':
+        end_token();
+        tokens_.push_back({"", false, 1, false, false, false, true});
         break;
 
       case ' ':
@@ -307,70 +314,110 @@ namespace
   };
 }
 
-std::optional<Command> parse_command(const std::string &input, int last_status, std::string &error)
+namespace
 {
-  // Split the line into words and `>` markers (quotes/escapes already resolved).
+  // One command of a pipeline: words and redirects, no `|`. `end_name` is how a
+  // dangling redirect operator names what follows it in the error message.
+  std::optional<Command> parse_stage(std::vector<Token> &tokens, const char *end_name,
+                                     std::string &error)
+  {
+    Command command;
+    for (size_t i = 0; i < tokens.size(); ++i)
+    {
+      // Plain word: it's an argument.
+      if (!tokens[i].is_redirect)
+      {
+        command.args.push_back(std::move(tokens[i].text));
+        continue;
+      }
+
+      // The operator must be followed by a word, which is the target file.
+      bool has_target = i + 1 < tokens.size() && !tokens[i + 1].is_redirect;
+      if (!has_target)
+      {
+        // Name the offending token like bash: another `>`, or end of line.
+        const char *unexpected = i + 1 < tokens.size() ? ">" : end_name;
+        error = std::string("syntax error near unexpected token `") + unexpected + "'";
+        return std::nullopt;
+      }
+
+      Redirect redirect{.fd = tokens[i].fd, .append = tokens[i].append};
+      std::string &target = tokens[i + 1].text;
+
+      if (!valid_fd(redirect.fd, error))
+      {
+        return std::nullopt;
+      }
+
+      if (tokens[i].dup)
+      {
+        // `2>&1`: the target must be the number of an fd to copy.
+        auto from = fd_from_digits(target);
+        if (!from)
+        {
+          error = target + ": Bad fd number";
+          return std::nullopt;
+        }
+        if (!valid_fd(*from, error))
+        {
+          return std::nullopt;
+        }
+        redirect.dup_from = *from;
+      }
+      else
+      {
+        redirect.path = std::move(target);
+      }
+
+      command.redirects.push_back(std::move(redirect));
+      ++i; // the target word is consumed too
+    }
+
+    return command;
+  }
+}
+
+std::optional<Pipeline> parse_pipeline(const std::string &input, int last_status, std::string &error)
+{
+  // Split the line into words, `>` markers and `|` markers (quotes/escapes
+  // already resolved).
   auto tokens = Tokenizer{last_status}.run(input);
 
-  // A trailing unquoted `&` word runs the command in the background.
-  Command command;
-  if (!tokens.empty() && !tokens.back().is_redirect && !tokens.back().quoted &&
-      tokens.back().text == "&")
+  // A trailing unquoted `&` word runs the whole pipeline in the background.
+  Pipeline pipeline;
+  if (!tokens.empty() && !tokens.back().is_redirect && !tokens.back().is_pipe &&
+      !tokens.back().quoted && tokens.back().text == "&")
   {
     tokens.pop_back();
-    command.background = true;
+    pipeline.background = true;
   }
 
-  for (size_t i = 0; i < tokens.size(); ++i)
+  // A line with no tokens is one empty command; otherwise every `|` needs a
+  // command on both sides.
+  std::vector<Token> stage;
+  for (size_t i = 0; i <= tokens.size(); ++i)
   {
-    // Plain word: it's an argument.
-    if (!tokens[i].is_redirect)
+    const bool at_pipe = i < tokens.size() && tokens[i].is_pipe;
+    if (i < tokens.size() && !at_pipe)
     {
-      command.args.push_back(std::move(tokens[i].text));
+      stage.push_back(std::move(tokens[i]));
       continue;
     }
 
-    // The operator must be followed by a word, which is the target file.
-    bool has_target = i + 1 < tokens.size() && !tokens[i + 1].is_redirect;
-    if (!has_target)
+    const bool last = i == tokens.size();
+    if (stage.empty() && (!last || !pipeline.stages.empty()))
     {
-      // Name the offending token like bash: another `>`, or end of line.
-      const char *unexpected = i + 1 < tokens.size() ? ">" : "newline";
-      error = std::string("syntax error near unexpected token `") + unexpected + "'";
+      error = std::string("syntax error near unexpected token `") + (last ? "newline" : "|") + "'";
       return std::nullopt;
     }
 
-    Redirect redirect{.fd = tokens[i].fd, .append = tokens[i].append};
-    std::string &target = tokens[i + 1].text;
-
-    if (!valid_fd(redirect.fd, error))
+    auto command = parse_stage(stage, last ? "newline" : "|", error);
+    if (!command)
     {
       return std::nullopt;
     }
-
-    if (tokens[i].dup)
-    {
-      // `2>&1`: the target must be the number of an fd to copy.
-      auto from = fd_from_digits(target);
-      if (!from)
-      {
-        error = target + ": Bad fd number";
-        return std::nullopt;
-      }
-      if (!valid_fd(*from, error))
-      {
-        return std::nullopt;
-      }
-      redirect.dup_from = *from;
-    }
-    else
-    {
-      redirect.path = std::move(target);
-    }
-
-    command.redirects.push_back(std::move(redirect));
-    ++i; // the target word is consumed too
+    pipeline.stages.push_back(std::move(*command));
+    stage.clear();
   }
-
-  return command;
+  return pipeline;
 }

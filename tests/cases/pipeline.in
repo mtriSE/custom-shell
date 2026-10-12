@@ -1,0 +1,8 @@
+echo hello > f
+cat f | tr a-z A-Z
+cat f | cat | tr a-z A-Z
+cat f | false
+echo $?
+cat f | tr a-z A-Z > g
+cat g
+cat f|tr a-z A-Z

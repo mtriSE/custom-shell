@@ -17,10 +17,16 @@ struct Command
   std::vector<std::string> args;
   // In the order they appear on the line; applied in that order.
   std::vector<Redirect> redirects;
-  // Line ended with an unquoted `&`: don't wait for the command.
+};
+
+// Commands joined by `|`; the output of each feeds the next.
+struct Pipeline
+{
+  std::vector<Command> stages; // never empty; one empty command for a blank line
+  // Line ended with an unquoted `&`: don't wait for it.
   bool background = false;
 };
 
 // Parses one input line; `last_status` is what `$?` expands to. On a syntax
 // error returns std::nullopt and sets `error`.
-std::optional<Command> parse_command(const std::string &input, int last_status, std::string &error);
+std::optional<Pipeline> parse_pipeline(const std::string &input, int last_status, std::string &error);

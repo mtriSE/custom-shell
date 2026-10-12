@@ -14,6 +14,7 @@
 #include <readline/history.h>
 #include <readline/readline.h>
 #include <string>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
 
@@ -84,7 +85,17 @@ namespace
     return true;
   }
 
-  Outcome run_command(const Command &command)
+  // Foreground: wait for it. Background: start it and return its pid.
+  // InChild: this process is already a forked pipeline stage, so an external
+  // program replaces it instead of being forked again.
+  enum class Mode
+  {
+    Foreground,
+    Background,
+    InChild,
+  };
+
+  Outcome run_command(const Command &command, Mode mode)
   {
     // Applied before dispatch so it covers builtins, external programs and
     // unknown commands alike; undone when this function returns.
@@ -113,7 +124,11 @@ namespace
 
     if (auto exe = find_in_path(args[0]))
     {
-      if (command.background)
+      if (mode == Mode::InChild)
+      {
+        exec_replace(*exe, args);
+      }
+      if (mode == Mode::Background)
       {
         // Not reaped yet (zombie until the shell exits); `jobs` will own that.
         pid_t pid = spawn(*exe, args);
@@ -124,6 +139,98 @@ namespace
 
     std::cerr << args[0] << ": command not found" << std::endl;
     return {.status = 127};
+  }
+
+  // Runs the stage of a pipeline in its own process: stdin/stdout come from the
+  // neighbouring pipes (applied before the stage's own redirects, so `a > f | b`
+  // leaves `b` with an empty input), and every pipe fd is closed afterwards.
+  [[noreturn]] void run_stage(const Command &stage, int in_fd, int out_fd,
+                              const std::vector<int> &pipe_fds)
+  {
+    if (in_fd >= 0)
+    {
+      dup2(in_fd, STDIN_FILENO);
+    }
+    if (out_fd >= 0)
+    {
+      dup2(out_fd, STDOUT_FILENO);
+    }
+    for (int fd : pipe_fds)
+    {
+      close(fd);
+    }
+    Outcome outcome = run_command(stage, Mode::InChild);
+    std::cout.flush();
+    _exit(outcome.status);
+  }
+
+  // Starts every stage at once and waits for all of them; the status is the last
+  // stage's. The parent must close its pipe ends before waiting, or a reader
+  // never sees EOF.
+  int run_stages(const std::vector<Command> &stages)
+  {
+    std::vector<int> pipe_fds;
+    for (size_t i = 0; i + 1 < stages.size(); ++i)
+    {
+      int fds[2];
+      if (pipe(fds) < 0)
+      {
+        perror("pipe");
+        for (int fd : pipe_fds)
+        {
+          close(fd);
+        }
+        return 1;
+      }
+      pipe_fds.push_back(fds[0]);
+      pipe_fds.push_back(fds[1]);
+    }
+
+    std::vector<pid_t> pids;
+    for (size_t i = 0; i < stages.size(); ++i)
+    {
+      pid_t pid = fork();
+      if (pid < 0)
+      {
+        perror("fork");
+        break;
+      }
+      if (pid == 0)
+      {
+        const int in_fd = i > 0 ? pipe_fds[2 * (i - 1)] : -1;
+        const int out_fd = i + 1 < stages.size() ? pipe_fds[2 * i + 1] : -1;
+        run_stage(stages[i], in_fd, out_fd, pipe_fds);
+      }
+      pids.push_back(pid);
+    }
+
+    for (int fd : pipe_fds)
+    {
+      close(fd);
+    }
+
+    int status = 1;
+    for (size_t i = 0; i < pids.size(); ++i)
+    {
+      int wstatus = 0;
+      waitpid(pids[i], &wstatus, 0);
+      if (i + 1 == stages.size())
+      {
+        status = WIFEXITED(wstatus) ? WEXITSTATUS(wstatus) : 128 + WTERMSIG(wstatus);
+      }
+    }
+    return status;
+  }
+
+  Outcome run_pipeline(const Pipeline &pipeline)
+  {
+    if (pipeline.stages.size() == 1)
+    {
+      return run_command(pipeline.stages[0],
+                         pipeline.background ? Mode::Background : Mode::Foreground);
+    }
+    // `a | b &` is not supported yet: it runs in the foreground, without a job.
+    return {.status = run_stages(pipeline.stages)};
   }
 }
 
@@ -143,15 +250,15 @@ void Shell::run()
     }
 
     std::string error;
-    auto command = parse_command(input, last_status_, error);
-    if (!command)
+    auto pipeline = parse_pipeline(input, last_status_, error);
+    if (!pipeline)
     {
       std::cerr << error << std::endl;
       last_status_ = 2;
       continue;
     }
 
-    Outcome outcome = run_command(*command);
+    Outcome outcome = run_pipeline(*pipeline);
     last_status_ = outcome.status;
     if (outcome.job_pid > 0)
     {

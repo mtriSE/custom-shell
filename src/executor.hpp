@@ -10,6 +10,10 @@
 // name as typed) and waits for it. Returns its exit status.
 int execute(const std::filesystem::path &exe, const std::vector<std::string> &args);
 
+// Replaces the current process with `exe` (args as for execute()). Only
+// returns control by exiting with status 127 if the exec fails.
+[[noreturn]] void exec_replace(const std::filesystem::path &exe, const std::vector<std::string> &args);
+
 // Like execute(), but returns the child's pid right away without waiting, or -1
 // if fork fails. The child is not reaped here.
 pid_t spawn(const std::filesystem::path &exe, const std::vector<std::string> &args);
