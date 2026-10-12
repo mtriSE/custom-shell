@@ -70,64 +70,82 @@ namespace
     std::cout << "complete -C " << quote_single(script) << ' ' << command << std::endl;
   }
 
-  // Supports `-C <script> <command>...`, `-p [command...]` and `-r [command...]`.
-  BuiltinResult builtin_complete(const Args &args)
+  // complete -C <script> <command>...
+  BuiltinResult complete_register(const Args &args)
+  {
+    if (args.size() == 2)
+    {
+      std::cerr << "complete: -C: option requires an argument" << std::endl;
+      return {.status = 2};
+    }
+    for (size_t i = 3; i < args.size(); ++i)
+    {
+      set_completer(args[i], args[2]);
+    }
+    return {};
+  }
+
+  // complete -r [command...]
+  // Silent, and removing a command that has no completer is not an error.
+  // Without names it removes every completer, as in bash.
+  BuiltinResult complete_remove(const Args &args)
+  {
+    if (args.size() == 2)
+    {
+      clear_completers();
+    }
+    for (size_t i = 2; i < args.size(); ++i)
+    {
+      remove_completer(args[i]);
+    }
+    return {};
+  }
+
+  // complete -p [command...]
+  BuiltinResult complete_print(const Args &args)
   {
     BuiltinResult result;
-    if (args.size() < 2)
+    if (args.size() == 2)
     {
-      return result;
-    }
-
-    if (args[1] == "-C")
-    {
-      if (args.size() == 2)
+      for (const auto &[command, script] : all_completers())
       {
-        std::cerr << "complete: -C: option requires an argument" << std::endl;
-        result.status = 2;
-        return result;
-      }
-      for (size_t i = 3; i < args.size(); ++i)
-      {
-        set_completer(args[i], args[2]);
+        print_completer(command, script);
       }
     }
-    else if (args[1] == "-r")
+    for (size_t i = 2; i < args.size(); ++i)
     {
-      // Silent, and removing a command that has no completer is not an error.
-      // Without names it removes every completer, as in bash.
-      if (args.size() == 2)
+      if (auto script = find_completer(args[i]))
       {
-        clear_completers();
+        print_completer(args[i], *script);
       }
-      for (size_t i = 2; i < args.size(); ++i)
+      else
       {
-        remove_completer(args[i]);
-      }
-    }
-    else if (args[1] == "-p")
-    {
-      if (args.size() == 2)
-      {
-        for (const auto &[command, script] : all_completers())
-        {
-          print_completer(command, script);
-        }
-      }
-      for (size_t i = 2; i < args.size(); ++i)
-      {
-        if (auto script = find_completer(args[i]))
-        {
-          print_completer(args[i], *script);
-        }
-        else
-        {
-          std::cerr << "complete: " << args[i] << ": no completion specification" << std::endl;
-          result.status = 1;
-        }
+        std::cerr << "complete: " << args[i] << ": no completion specification" << std::endl;
+        result.status = 1;
       }
     }
     return result;
+  }
+
+  // Dispatches on the first option; anything else is a no-op for now.
+  BuiltinResult builtin_complete(const Args &args)
+  {
+    if (args.size() >= 2)
+    {
+      if (args[1] == "-C")
+      {
+        return complete_register(args);
+      }
+      if (args[1] == "-r")
+      {
+        return complete_remove(args);
+      }
+      if (args[1] == "-p")
+      {
+        return complete_print(args);
+      }
+    }
+    return {};
   }
 
   // Keep last: add each new builtin_* above, then one line here.
