@@ -49,6 +49,26 @@ int execute(const std::filesystem::path &exe, const std::vector<std::string> &ar
   return 128 + WTERMSIG(status);
 }
 
+pid_t spawn(const std::filesystem::path &exe, const std::vector<std::string> &args)
+{
+  std::vector<std::string> storage = args;
+  std::vector<char *> argv = build_argv(storage);
+
+  pid_t pid = fork();
+  if (pid < 0)
+  {
+    perror("fork");
+    return -1;
+  }
+  if (pid == 0)
+  {
+    execv(exe.c_str(), argv.data());
+    perror(exe.c_str());
+    _exit(127);
+  }
+  return pid;
+}
+
 std::vector<std::string> capture_lines(const std::filesystem::path &exe,
                                        const std::vector<std::string> &args,
                                        const Env &env)

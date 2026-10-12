@@ -60,6 +60,8 @@ namespace
     bool append = false;
     // `>&`: the following word is an fd to copy, not a file.
     bool dup = false;
+    // A word that used any quote, backslash or expansion.
+    bool quoted = false;
   };
 
   class Tokenizer
@@ -217,7 +219,7 @@ namespace
         return;
       }
 
-      tokens_.push_back({std::move(current_), false});
+      tokens_.push_back({std::move(current_), false, 1, false, false, quoted_});
       current_.clear();
       in_token_ = false;
       quoted_ = false;
@@ -310,7 +312,15 @@ std::optional<Command> parse_command(const std::string &input, int last_status, 
   // Split the line into words and `>` markers (quotes/escapes already resolved).
   auto tokens = Tokenizer{last_status}.run(input);
 
+  // A trailing unquoted `&` word runs the command in the background.
   Command command;
+  if (!tokens.empty() && !tokens.back().is_redirect && !tokens.back().quoted &&
+      tokens.back().text == "&")
+  {
+    tokens.pop_back();
+    command.background = true;
+  }
+
   for (size_t i = 0; i < tokens.size(); ++i)
   {
     // Plain word: it's an argument.

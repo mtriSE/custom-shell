@@ -56,6 +56,7 @@ namespace
   {
     bool exit = false; // the shell should exit
     int status = 0;    // exit status, seen by the next command as `$?`
+    pid_t job_pid = 0; // > 0: a background job was started with this pid
   };
 
   // Returns false on EOF. Readline only on a tty: with piped stdin it would
@@ -111,6 +112,12 @@ namespace
 
     if (auto exe = find_in_path(args[0]))
     {
+      if (command.background)
+      {
+        // Not reaped yet (zombie until the shell exits); `jobs` will own that.
+        pid_t pid = spawn(*exe, args);
+        return pid < 0 ? Outcome{.status = 1} : Outcome{.job_pid = pid};
+      }
       return {.status = execute(*exe, args)};
     }
 
@@ -142,6 +149,11 @@ void Shell::run()
 
     Outcome outcome = run_command(*command);
     last_status_ = outcome.status;
+    if (outcome.job_pid > 0)
+    {
+      // Printed here, after the command's redirects have been undone.
+      std::cout << '[' << next_job_number_++ << "] " << outcome.job_pid << std::endl;
+    }
     if (outcome.exit)
     {
       break;

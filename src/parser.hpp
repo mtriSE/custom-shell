@@ -17,6 +17,8 @@ struct Command
   std::vector<std::string> args;
   // In the order they appear on the line; applied in that order.
   std::vector<Redirect> redirects;
+  // Line ended with an unquoted `&`: don't wait for the command.
+  bool background = false;
 };
 
 // Parses one input line; `last_status` is what `$?` expands to. On a syntax
