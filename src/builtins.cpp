@@ -148,6 +148,12 @@ namespace
     return {};
   }
 
+  // Stub: there is no job table yet, so there is never anything to list.
+  BuiltinResult builtin_jobs(const Args &)
+  {
+    return {};
+  }
+
   // Keep last: add each new builtin_* above, then one line here.
   const std::unordered_map<std::string, Handler> &registry()
   {
@@ -156,6 +162,7 @@ namespace
         {"echo", builtin_echo},
         {"type", builtin_type},
         {"complete", builtin_complete},
+        {"jobs", builtin_jobs},
     };
     return builtins;
   }
