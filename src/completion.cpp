@@ -6,6 +6,7 @@
 #include "path_utils.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <iterator>
@@ -81,6 +82,32 @@ namespace
     return capture_lines(exe, {script, command, word, previous}, env);
   }
 
+  // Replaces readline's column layout: one line, two spaces between entries.
+  // matches[0] is the common prefix; the entries are matches[1..count]. Readline
+  // redraws the prompt and the line being edited after this returns.
+  void display_matches(char **matches, int count, int /*max_length*/)
+  {
+    fputc('\n', rl_outstream);
+    for (int i = 1; i <= count; ++i)
+    {
+      const char *entry = matches[i];
+      if (rl_filename_completion_desired)
+      {
+        // Filenames are listed without their directory, as readline does.
+        if (const char *slash = strrchr(entry, '/'))
+        {
+          entry = slash + 1;
+        }
+      }
+      fputs(i > 1 ? "  " : "", rl_outstream);
+      fputs(entry, rl_outstream);
+    }
+    fputc('\n', rl_outstream);
+    fflush(rl_outstream);
+    // The cursor is on a fresh line, so the prompt must be drawn again.
+    rl_on_new_line();
+  }
+
   char **attempt_completion(const char *text, int start, int /*end*/)
   {
     const auto words = words_before(start);
@@ -110,6 +137,7 @@ namespace
 void init_readline()
 {
   rl_attempted_completion_function = attempt_completion;
+  rl_completion_display_matches_hook = display_matches;
   // No bracketed-paste escape sequences in the output.
   rl_variable_bind("enable-bracketed-paste", "off");
 }
