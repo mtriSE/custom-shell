@@ -2,25 +2,18 @@
 
 #include <string>
 #include <sys/types.h>
-#include <vector>
 
 // Background jobs started with a trailing `&`.
-struct Job
-{
-  int number;
-  pid_t pid;
-  std::string command; // as typed, including the trailing `&`
-  bool done = false;   // exited and reaped by reap_jobs()
-};
 
-// Numbers go 1, 2, 3... and are never reused. Returns the new job's number.
+// Numbers go 1, 2, 3... and are never reused. `command` is the line as typed,
+// including the trailing `&`. Returns the new job's number.
 int add_job(pid_t pid, std::string command);
 
-// In creation order.
-const std::vector<Job> &all_jobs();
-
-// Checks every running job without waiting and marks the ones that have
-// exited (any way of ending counts), reaping them so they don't stay zombies.
-void reap_jobs();
-
-void remove_done_jobs();
+// Checks every job without waiting, reaping the ones that have exited (any way
+// of ending counts) so they don't stay zombies. Then prints them as `Done`,
+// plus the running ones unless `only_done`, in `jobs` format:
+//   [1]-  Done                    sleep 1
+//   [2]+  Running                 sleep 30 &
+// `+` marks the newest job, `-` the one before it. Finished jobs are dropped
+// from the table afterwards, so each is reported exactly once.
+void print_jobs(bool only_done);

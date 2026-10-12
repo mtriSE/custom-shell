@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <functional>
-#include <iomanip>
 #include <iostream>
 #include <unordered_map>
 
@@ -150,37 +149,10 @@ namespace
     return {};
   }
 
-  // `Done` entries are listed without the trailing `&`, as bash does.
-  std::string without_ampersand(std::string command)
-  {
-    const auto trim = [&command]
-    {
-      command.erase(command.find_last_not_of(" \t") + 1);
-    };
-    trim();
-    if (command.ends_with('&'))
-    {
-      command.pop_back();
-      trim();
-    }
-    return command;
-  }
-
-  // `[1]+  Running                 sleep 10 &`: `+` marks the newest job, `-` the
-  // one before it. Jobs that have exited are shown once as Done, then dropped.
+  // `[1]+  Running                 sleep 10 &`; see print_jobs().
   BuiltinResult builtin_jobs(const Args &)
   {
-    reap_jobs();
-    const auto &jobs = all_jobs();
-    for (size_t i = 0; i < jobs.size(); ++i)
-    {
-      const char marker = i + 1 == jobs.size() ? '+' : i + 2 == jobs.size() ? '-' : ' ';
-      const auto &job = jobs[i];
-      std::cout << '[' << job.number << ']' << marker << "  " << std::left << std::setw(24)
-                << (job.done ? "Done" : "Running")
-                << (job.done ? without_ampersand(job.command) : job.command) << std::endl;
-    }
-    remove_done_jobs();
+    print_jobs(false);
     return {};
   }
 

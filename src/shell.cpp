@@ -133,6 +133,9 @@ void Shell::run()
 
   while (true)
   {
+    // Finished background jobs are reported just before the prompt.
+    print_jobs(true);
+
     std::string input;
     if (!read_line(input))
     {
