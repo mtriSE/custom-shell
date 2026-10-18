@@ -12,7 +12,10 @@ tests/run.sh               # run every test case (needs build/shell to exist)
 tests/run.sh --update      # overwrite the .out files with the current output
 ```
 
-- The project links against `readline`.
+- The project links against `readline`. Install the readline **development** package for your
+  distribution (and a C++23 compiler and CMake) before the first build; the per-distribution
+  commands and troubleshooting are in [README.md](README.md#prerequisites). If a build fails with
+  `readline/readline.h: No such file or directory`, that package is missing.
 - `CMakeLists.txt` uses `GLOB_RECURSE src/*.cpp`, so **add a new file under
   `src/` and re-run cmake**; no file list to edit.
 

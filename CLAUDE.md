@@ -12,7 +12,9 @@ A POSIX-style shell in C++23, written from scratch. Docs, comments and commit me
 - Rebuild only: `cmake --build build`
 - Regression tests: `tests/run.sh` (needs a built `build/shell`). Each `tests/cases/<name>.in` is piped to the shell on stdin, stdout+stderr are diffed against `<name>.out`, in a scratch temp dir. `tests/run.sh --update` rewrites all `.out` files — review the git diff afterwards. To run one case, copy it to a temp dir and run `build/shell < case.in` manually (the script has no filter).
 
-`CMakeLists.txt` globs `src/*.cpp`, so new files are picked up after re-running cmake. It links `readline`, which provides line editing and TAB completion when stdin is a terminal.
+Prerequisites (install before the first build): CMake >= 3.13, a C++23 compiler (GCC 13+ / Clang 17+ recommended) and the GNU readline *development* package. Debian/Ubuntu: `sudo apt install build-essential cmake libreadline-dev`; Fedora/RHEL: `sudo dnf install gcc-c++ cmake readline-devel`; Arch: `sudo pacman -S --needed base-devel cmake readline`; the full list (openSUSE, Alpine, Void, Gentoo, Nix) is in README.md. A build error `readline/readline.h: No such file or directory` means the dev package is missing; do not work around it, install it (ask the user to run it, since it needs sudo).
+
+`CMakeLists.txt` globs `src/*.cpp` and `src/*.hpp` recursively, so new files are picked up after re-running cmake. It links `readline`, which provides line editing and TAB completion when stdin is a terminal.
 
 ## Architecture
 
