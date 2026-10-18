@@ -1,0 +1,7 @@
+$ complete: git: no completion specification
+$ 1
+$ complete: a: no completion specification
+complete: b: no completion specification
+$ $ 0
+$ $ end
+$ 

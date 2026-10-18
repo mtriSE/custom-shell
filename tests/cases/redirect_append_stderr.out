@@ -1,0 +1,15 @@
+$ $ $ cat: nonexistent1: No such file or directory
+cat: nonexistent2: No such file or directory
+$ ls: cannot access 'nonexistent': No such file or directory
+$ $ $ ls: cannot access 'nonexistent': No such file or directory
+$ James says Error
+$ $ $ cat: nonexistent: No such file or directory
+ls: cannot access 'nonexistent': No such file or directory
+$ $ $ nonexistent_cmd: command not found
+nonexistent_cmd: command not found
+$ $ $ hi
+$ cat: nonexistent: No such file or directory
+$ $ a2
+$ syntax error near unexpected token `>'
+$ back on terminal
+$ 

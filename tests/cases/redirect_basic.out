@@ -1,0 +1,7 @@
+$ $ hello
+$ $ hello
+$ $ hello
+$ $ $ two
+$ $ echo is a shell builtin
+$ visible after redirect
+$ 

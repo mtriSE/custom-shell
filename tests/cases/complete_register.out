@@ -1,0 +1,14 @@
+$ $ registered 0
+$ complete -C '/path/to/git/completer' git
+$ $ complete -C '/path/to/docker/completer' docker
+$ complete -C '/path/to/git/completer' git
+complete -C '/path/to/docker/completer' docker
+complete: nope: no completion specification
+$ 1
+$ $ complete -C '/other/git' git
+$ complete -C '/path/to/docker/completer' docker
+complete -C '/other/git' git
+$ $ complete -C '/a'\''b' quoted
+$ complete: -C: option requires an argument
+$ 2
+$ 

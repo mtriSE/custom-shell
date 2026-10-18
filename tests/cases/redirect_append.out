@@ -1,0 +1,13 @@
+$ $ $ first
+second
+$ $ $ Hello Emily
+Hello Maria
+$ $ $ List of files:
+apple
+$ $ $ a
+$ b
+$ >> x
+$ syntax error near unexpected token `newline'
+$ syntax error near unexpected token `>'
+$ back on terminal
+$ 

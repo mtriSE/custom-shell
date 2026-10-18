@@ -1,0 +1,7 @@
+$ cat: nonexistent: No such file or directory
+$ $ syntax error near unexpected token `newline'
+$ syntax error near unexpected token `>'
+$ /nonexistent_dir/f: No such file or directory
+$ nonexistent_cmd: command not found
+$ $ still alive
+$ 

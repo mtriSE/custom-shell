@@ -1,0 +1,8 @@
+$ $ $ $ removed 0
+$ complete: git: no completion specification
+$ 1
+$ complete -C '/path/docker/completer' docker
+$ $ nope 0
+$ $ complete: docker: no completion specification
+$ $ end 0
+$ 

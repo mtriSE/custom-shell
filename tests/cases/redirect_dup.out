@@ -1,0 +1,14 @@
+$ $ ls: cannot access 'nonexistent': No such file or directory
+$ ls: cannot access 'nonexistent': No such file or directory
+$ $ back1
+$ to-err
+$ $ x
+$ $ nope: not found
+$ 2>&1
+$ a2
+$ b
+$ syntax error near unexpected token `newline'
+$ abc: Bad fd number
+$ 9: Bad file descriptor
+$ back2
+$ 
