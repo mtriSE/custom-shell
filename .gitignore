@@ -1045,3 +1045,10 @@ dkms.conf
 *.dis
 
 vcpkg_installed
+
+# Machine-local Claude Code state
+.claude/settings.local.json
+
+# Expected output of the regression tests is source, not a build artifact.
+# Must stay after every *.out rule above.
+!tests/cases/*.out
