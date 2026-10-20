@@ -4,6 +4,7 @@
 #include "job_table.hpp"
 #include "parser.hpp"
 #include "runner.hpp"
+#include "signals.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -25,6 +26,9 @@ namespace
       return static_cast<bool>(std::getline(std::cin, out));
     }
 
+    // A Ctrl-C pressed while the previous command ran must not cancel this prompt.
+    discard_interrupt();
+    prompt_was_interrupted();  // a flag left from an earlier prompt must not drop this line
     char *line = readline("$ ");
     if (line == nullptr)
     {
@@ -52,6 +56,7 @@ namespace
 
 void Shell::run()
 {
+  setup_interactive_signals();
   init_readline();
 
   while (true)
@@ -65,6 +70,13 @@ void Shell::run()
       break;
     }
 
+    // Ctrl-C at the prompt: nothing runs, and $? becomes 130 like in other shells.
+    if (prompt_was_interrupted())
+    {
+      last_status_ = 130;
+      continue;
+    }
+
     std::string error;
     auto pipeline = parse_pipeline(input, last_status_, error);
     if (!pipeline)
@@ -76,6 +88,12 @@ void Shell::run()
 
     Outcome outcome = run_pipeline(*pipeline);
     last_status_ = outcome.status;
+    // The terminal shows nothing of its own after a command killed by Ctrl-C or Ctrl-\, so
+    // the prompt would start mid-line. Only on a terminal: piped output stays as before.
+    if (outcome.interrupted && is_interactive())
+    {
+      std::cout << '\n';
+    }
     if (outcome.job_pid > 0)
     {
       announce_job(input, outcome.job_pid);

@@ -94,7 +94,9 @@ src/
 ├── signals.hpp          # NEW: interactive signal setup, interrupt pipe, child reset
 ├── signals.cpp          # NEW
 ├── shell.cpp            # setup call, discard before each prompt, newline on Outcome::interrupted
-├── completion.cpp       # init_readline: rl_catch_signals = 0, interruptible character reader
+├── completion.cpp       # init_readline: rl_catch_signals = 0, interruptible character reader;
+│                        # prompt_was_interrupted() tells Shell::run the line was abandoned
+├── completion.hpp       # declares prompt_was_interrupted()
 ├── executor.cpp         # own process group for background and completer children, interrupt-aware
 │                        # capture_lines, EINTR-safe waitpid, report death by SIGINT/SIGQUIT
 ├── executor.hpp         # contract comments and result type for the above

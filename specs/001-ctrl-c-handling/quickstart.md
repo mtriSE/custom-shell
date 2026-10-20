@@ -36,12 +36,14 @@ brackets.
 10. Run `sleep 100 > /dev/null`, press Ctrl-C, then type any command. [shell normal afterwards]
 11. Create a script that runs `sleep 100`, register it with `complete -C /path/to/script mycmd`,
     type `mycmd a`, press TAB, then Ctrl-C. [returns within 1 s, line `mycmd a` still there]
-12. Run `printf 'sleep 100\n' | build/shell` and `echo 'echo hi' | build/shell`. [behaviour as
+12. Press ESC, then Ctrl-C, then type `echo hi`. [fresh prompt, `hi` printed, no bell]; the same
+    after Ctrl-X, and after Ctrl-R followed by `ec`.
+13. Run `printf 'sleep 100\n' | build/shell` and `echo 'echo hi' | build/shell`. [behaviour as
     before: no extra newlines or changes with piped input]
 
 ## Latency check (SC-001, 100 ms)
 
 At a prompt, press Ctrl-C and watch for the new prompt; it should appear without a visible delay.
 For a measured value, the terminal test for scenario 1 prints the elapsed time between sending
-Ctrl-C and seeing the next prompt when run with `-v`; the figure should be well under 100 ms. (The
+Ctrl-C and seeing the next prompt when run as `PTY_TIMING=1 tests/pty/run.sh -k discards`; the figure should be well under 100 ms. (The
 automated assertion is 1 s so a loaded machine cannot make it flaky.)

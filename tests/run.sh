@@ -1,6 +1,7 @@
 #!/bin/bash
 # Runs every tests/cases/*.in through ./build/shell (stdout+stderr merged) in a
 # scratch directory (with HOME=/usr) and diffs the result against the matching .out file.
+# Then runs the terminal tests (tests/pty/run.sh, needs python3); --update skips them.
 # Usage: tests/run.sh [--update]   (--update rewrites the .out files)
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="$ROOT/build/shell"
@@ -31,4 +32,6 @@ done
 
 [ "$update" = 1 ] && exit 0
 echo "$pass passed, $fail failed"
+
+"$ROOT/tests/pty/run.sh" || fail=$((fail + 1))
 [ "$fail" -eq 0 ]

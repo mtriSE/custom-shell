@@ -18,6 +18,8 @@ Install these **before** building. Besides the build tools, you need the GNU rea
 - A C++23 compiler (GCC 13+ or Clang 17+ recommended)
 - GNU readline development files
 - A POSIX system (Linux); Windows is not supported
+- `python3` (standard library only) to run the terminal tests in `tests/pty/`; it is not needed to
+  build or run the shell. `tests/run.sh` fails with a clear message if it is missing
 
 | Distribution | Install command |
 |---|---|
@@ -45,7 +47,8 @@ from the table above, then re-run cmake in a clean build directory (`rm -rf buil
 
 ```sh
 ./run.sh                 # configure, build, then start the shell
-tests/run.sh             # regression tests (needs build/shell)
+tests/run.sh             # golden cases, then terminal (pty) tests; needs build/shell and python3
+tests/pty/run.sh         # terminal tests only
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how the code is organised.

@@ -18,6 +18,9 @@ the design needs. Names describe roles; exact identifiers are chosen at implemen
 - **take**: "was there an interrupt since I last looked?" Reads and discards all pending bytes,
   returns true if any.
 - **discard**: same as take, result ignored; called at the start of every prompt.
+- **prompt interrupted** (file-scope flag in `completion.cpp`): set by the character reader when
+  it takes an interrupt; read and cleared by `prompt_was_interrupted()`, which `Shell::run` uses
+  to set `$?` to 130 and skip the line. It must never outlive the prompt that set it.
 - Invariant: the handler only writes to the pipe; no other state is touched in it.
 
 ### Signal dispositions (set once at start-up when interactive)
@@ -60,6 +63,7 @@ default right after `fork`.
 | State | Ctrl-C | Ctrl-\ | Ctrl-Z |
 |---|---|---|---|
 | Prompt | line discarded, `$?`=130, new prompt | no effect | no effect |
+| Prompt, mid key sequence (after ESC, Ctrl-X) or in Ctrl-R search | same as Prompt | no effect | no effect |
 | Completing | script killed, line kept, `$?` unchanged | no effect | no effect |
 | Running (foreground) | command ends, `$?`=130, newline | command ends, `$?`=131, newline | no effect (stop-gap) |
 | Background job | not delivered (own group) | not delivered | not delivered |
@@ -67,6 +71,8 @@ default right after `fork`.
 ## Validation rules (from the spec)
 - After any Ctrl-C the shell is in state Prompt and still alive (FR-001, FR-004, FR-010).
 - Ctrl-C at Prompt changes nothing but `$?` (FR-002, FR-003).
+- Ctrl-C in a key sequence or history search ends the prompt like any other Ctrl-C: line and
+  recalled history line discarded, flag consumed, next line runs (spec scenario 6).
 - A stale interrupt never carries into the next Prompt (edge case "after Enter"): enforced by
   `discard` at the start of every prompt.
 - `$?` after a command that ended by itself is that command's status, never forced to 130

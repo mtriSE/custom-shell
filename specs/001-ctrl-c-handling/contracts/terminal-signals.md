@@ -14,6 +14,7 @@ Applies only when standard input is a terminal. With piped input nothing here ap
 | Situation | Key | Observable result | `$?` afterwards |
 |---|---|---|---|
 | At prompt, line empty or partly typed | Ctrl-C | typed text discarded, cursor on a new line, new prompt `$ ` | 130 |
+| At prompt, after ESC or Ctrl-X, or in a Ctrl-R search | Ctrl-C | same as above; a recalled history line is discarded too, and the next line typed runs normally | 130 |
 | At prompt | Ctrl-\ | nothing | unchanged |
 | At prompt | Ctrl-Z | nothing | unchanged |
 | At prompt | Ctrl-D (empty line) | shell ends (unchanged) | unchanged |
@@ -57,6 +58,11 @@ Used by: `shell.cpp` (setup, discard, newline), `completion.cpp` (character read
   and return an empty result; the "no timeout" note stays.
 - `init_readline()`: header comment states it replaces readline's character reader so that an
   interrupt can end the line.
+- `bool prompt_was_interrupted()` (new, `completion.hpp`): true if the last `readline()` call
+  ended because of Ctrl-C; the line it returned is then empty and must not be run. Reading it
+  clears it. Ctrl-C must abandon the line in every editing state, including in the middle of a
+  key sequence (ESC, Ctrl-X) and in a Ctrl-R history search (spec scenario 6), and must leave no
+  state behind that swallows the next line.
 
 ## 4. Test commands
 

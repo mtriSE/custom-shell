@@ -4,21 +4,85 @@
 #include "completer_registry.hpp"
 #include "executor.hpp"
 #include "path_utils.hpp"
+#include "signals.hpp"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <cerrno>
 #include <iterator>
+#include <poll.h>
 #include <readline/readline.h>
 #include <readline/tilde.h>
 #include <sstream>
 #include <string>
+#include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace
 {
+  // Set by read_char when Ctrl-C ended the line being edited.
+  bool prompt_interrupted = false;
+  // Set by read_char between the Ctrl-G it hands readline after an interrupt and the newline
+  // that follows it.
+  bool abort_sent = false;
+
+  // Readline reads its keys through this. It waits on the terminal and on the Ctrl-C wake-up
+  // pipe at once, so Ctrl-C ends the line immediately with no polling and no lost wake-up
+  // (readline itself would retry the read after the signal and keep waiting for a key).
+  int read_char(FILE *stream)
+  {
+    if (abort_sent)
+    {
+      // Readline has dropped whatever it was in the middle of and is at a plain prompt, so a
+      // newline now ends the line. The line is empty (and is not run, see prompt_interrupted).
+      abort_sent = false;
+      rl_variable_bind("bell-style", "audible");
+      rl_replace_line("", 0);
+      rl_point = 0;
+      return '\n';
+    }
+
+    pollfd fds[2] = {{fileno(stream), POLLIN, 0}, {interrupt_fd(), POLLIN, 0}};
+    while (true)
+    {
+      if (poll(fds, 2, -1) < 0)
+      {
+        if (errno == EINTR)
+        {
+          continue;
+        }
+        return EOF;
+      }
+
+      if (fds[1].revents & POLLIN)
+      {
+        take_interrupt();
+        prompt_interrupted = true;
+        // A newline would not end the line when readline is in the middle of a key sequence
+        // (ESC, Ctrl-X) or a Ctrl-R search: it would take it as another key (ESC Ctrl-J even
+        // switches to vi mode). Ctrl-G aborts all of those, so send it first; its bell is muted.
+        abort_sent = true;
+        rl_variable_bind("bell-style", "none");
+        return '\a';
+      }
+
+      if (fds[0].revents & (POLLIN | POLLHUP | POLLERR))
+      {
+        unsigned char c;
+        ssize_t n;
+        do
+        {
+          n = read(fileno(stream), &c, 1);
+        } while (n < 0 && errno == EINTR);
+        return n == 1 ? c : EOF;
+      }
+    }
+  }
+
   // Filled by attempt_completion, handed out one by one by candidate_generator.
   std::vector<std::string> candidates;
 
@@ -146,8 +210,16 @@ namespace
   }
 }
 
+bool prompt_was_interrupted()
+{
+  return std::exchange(prompt_interrupted, false);
+}
+
 void init_readline()
 {
+  // Ctrl-C is handled by signals.cpp and read_char, not by readline's own handlers.
+  rl_catch_signals = 0;
+  rl_getc_function = read_char;
   rl_attempted_completion_function = attempt_completion;
   rl_completion_display_matches_hook = display_matches;
   // No bracketed-paste escape sequences in the output.

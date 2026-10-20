@@ -41,6 +41,19 @@ wait) without having to block SIGINT, so no signal mask is inherited by children
 - Leaving `rl_catch_signals = 1` and installing a handler first: readline re-raises into our
   handler but then continues with the old line buffer, so the line is not discarded. Rejected.
 
+**Experiment 3 (Ctrl-C in a key sequence or Ctrl-R search, found by `/speckit-analyze`)**:
+Experiment 2 returns `'\n'` and assumes readline then ends the line. After ESC or Ctrl-X, and in a
+Ctrl-R search, readline takes `'\n'` as another key and keeps waiting, so the "interrupted" flag
+stayed set and the next Enter was dropped (`$?` 130, command not run). Tried on a real pty:
+- `rl_done = 1` next to the `'\n'`: the line returns, but readline printed no newline, and ESC
+  Ctrl-J (Meta-Ctrl-J) is bound to `vi-editing-mode`, so the editor was left in vi mode. Rejected.
+- `rl_done = 1`, own `rl_crlf()` and Ctrl-G as the key: Ctrl-G's `rl_abort` clears `rl_done`, so
+  `readline()` never returned. Rejected.
+- **Works**: return Ctrl-G first (aborts a pending prefix and a search, and is harmless at a plain
+  prompt), then on the next call return `'\n'` with `rl_replace_line("", 0)`, which now ends the
+  empty line and prints the newline as before. The bell Ctrl-G rings is muted by `bell-style none`
+  until that next call. All 27 terminal tests pass.
+
 ## R2. What must the shell do with signals while a foreground command runs?
 
 **Facts**

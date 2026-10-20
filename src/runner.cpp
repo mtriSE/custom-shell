@@ -4,7 +4,10 @@
 #include "executor.hpp"
 #include "path_utils.hpp"
 #include "redirect.hpp"
+#include "signals.hpp"
 
+#include <cerrno>
+#include <csignal>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -97,7 +100,9 @@ namespace
         pid_t pid = spawn(*exe, args);
         return pid < 0 ? Outcome{.status = 1} : Outcome{.job_pid = pid};
       }
-      return {.status = execute(*exe, args)};
+      bool interrupted = false;
+      int status = execute(*exe, args, interrupted);
+      return {.status = status, .interrupted = interrupted};
     }
 
     std::cerr << args[0] << ": command not found" << std::endl;
@@ -110,6 +115,9 @@ namespace
   [[noreturn]] void run_stage(const Command &stage, int in_fd, int out_fd,
                               const std::vector<int> &pipe_fds)
   {
+    // Builtins run in this process, so they must not keep the shell's handlers; programs
+    // get the defaults at exec, but not yet while redirects are being applied.
+    reset_child_signals();
     if (in_fd >= 0)
     {
       dup2(in_fd, STDIN_FILENO);
@@ -130,7 +138,7 @@ namespace
   // Starts every stage at once and waits for all of them; the status is the last
   // stage's. The parent must close its pipe ends before waiting, or a reader
   // never sees EOF.
-  int run_stages(const std::vector<Command> &stages)
+  Outcome run_stages(const std::vector<Command> &stages)
   {
     std::vector<int> pipe_fds;
     for (size_t i = 0; i + 1 < stages.size(); ++i)
@@ -143,7 +151,7 @@ namespace
         {
           close(fd);
         }
-        return 1;
+        return {.status = 1};
       }
       pipe_fds.push_back(fds[0]);
       pipe_fds.push_back(fds[1]);
@@ -172,17 +180,27 @@ namespace
       close(fd);
     }
 
-    int status = 1;
+    Outcome outcome{.status = 1};
     for (size_t i = 0; i < pids.size(); ++i)
     {
       int wstatus = 0;
-      waitpid(pids[i], &wstatus, 0);
+      pid_t waited;
+      do
+      {
+        waited = waitpid(pids[i], &wstatus, 0);
+      } while (waited < 0 && errno == EINTR);
+
+      const bool by_signal = WIFSIGNALED(wstatus);
+      if (by_signal && (WTERMSIG(wstatus) == SIGINT || WTERMSIG(wstatus) == SIGQUIT))
+      {
+        outcome.interrupted = true;
+      }
       if (i + 1 == stages.size())
       {
-        status = WIFEXITED(wstatus) ? WEXITSTATUS(wstatus) : 128 + WTERMSIG(wstatus);
+        outcome.status = by_signal ? 128 + WTERMSIG(wstatus) : WEXITSTATUS(wstatus);
       }
     }
-    return status;
+    return outcome;
   }
 }
 
@@ -194,5 +212,5 @@ Outcome run_pipeline(const Pipeline &pipeline)
                        pipeline.background ? Mode::Background : Mode::Foreground);
   }
   // `a | b &` is not supported yet: it runs in the foreground, without a job.
-  return {.status = run_stages(pipeline.stages)};
+  return run_stages(pipeline.stages);
 }
