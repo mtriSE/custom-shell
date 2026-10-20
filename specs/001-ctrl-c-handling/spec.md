@@ -47,6 +47,10 @@ exit status of the abandoned line is 130.
    user has typed `cmd ar` and pressed TAB, **When** the user presses Ctrl-C, **Then** the script
    is stopped, no completion is applied, the line `cmd ar` is still being edited, and the shell
    keeps running.
+6. **Given** the line editor is in the middle of a key sequence (after ESC or Ctrl-X) or in a
+   history search (Ctrl-R), **When** the user presses Ctrl-C, **Then** it behaves as in
+   scenario 1: the line and any history line the search recalled are abandoned, a new prompt is
+   shown on a new line, `$?` is 130, and the next line typed runs normally.
 
 ---
 
@@ -121,6 +125,10 @@ work the user deliberately left running, or freeze the shell.
 - A command with output or input redirections (for example `sleep 100 > out.txt`) is interrupted:
   the shell's own input and output are back to normal afterwards, so the next prompt and the next
   command behave as usual.
+- Ctrl-C is pressed while the line editor is in the middle of a key sequence (after ESC or
+  Ctrl-X) or in a history search (Ctrl-R): it is the same as Ctrl-C at the prompt. Nothing of the
+  old line, or of a history line recalled by the search, is kept, and the next line typed is run
+  normally, never discarded and never joined to the old text.
 - Ctrl-Z is pressed while a foreground command runs: nothing happens. The command keeps running
   and the shell keeps waiting for it, so the terminal can never freeze. This is a deliberate
   stop-gap until job control exists (see FR-014 and Assumptions).

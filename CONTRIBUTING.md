@@ -8,7 +8,8 @@ breaking the existing design.
 
 ```sh
 ./run.sh                   # cmake configure + build, then run build/shell
-tests/run.sh               # run every test case (needs build/shell to exist)
+tests/run.sh               # golden cases, then the terminal tests (needs build/shell and python3)
+tests/pty/run.sh           # terminal (pty) tests only
 tests/run.sh --update      # overwrite the .out files with the current output
 ```
 
@@ -31,6 +32,14 @@ create files (`> out.txt`) without dirtying the repo. When you change behaviour
 on purpose, run `--update` and **read the `.out` diff by eye** before
 committing: `--update` accepts any output, including wrong output.
 
+### Terminal tests
+
+[tests/pty/](tests/pty/) runs `build/shell` on a pseudo-terminal (`harness.py`), sends keystrokes
+(Ctrl-C and friends) and asserts on the screen output and `$?`. They need `python3` (standard
+library only; see [README.md](README.md#prerequisites)); the run fails loudly if it is missing and
+never skips silently. Use them for anything that depends on a real terminal; the golden cases
+cannot, because stdin is a pipe there.
+
 ## 2. Source map
 
 | File | Role |
@@ -41,10 +50,51 @@ committing: `--update` accepts any output, including wrong output.
 | [src/redirect.cpp](src/redirect.cpp), [redirect.hpp](src/redirect.hpp) | `FdRedirect`: redirects one fd and restores it automatically (RAII). |
 | [src/builtins.cpp](src/builtins.cpp), [builtins.hpp](src/builtins.hpp) | Built-in commands: `exit`, `echo`, `type`. |
 | [src/executor.cpp](src/executor.cpp) | `fork` + `execv` + `waitpid` for external programs. |
+| [src/signals.cpp](src/signals.cpp), [signals.hpp](src/signals.hpp) | Terminal signals when stdin is a tty: Ctrl-C wake-up pipe, SIGINT/SIGQUIT/SIGTSTP set-up. No dependency on other modules or readline. |
+| [src/completion.cpp](src/completion.cpp) | Readline set-up: completion hooks and the interruptible character reader. |
 | [src/path_utils.cpp](src/path_utils.cpp) | `find_in_path`: looks up an executable in `$PATH`. |
 
 Dependencies point one way: `shell` uses every other module; `parser`,
 `redirect`, `builtins` and `executor` do not know about each other.
+
+### Terminal signals
+
+Only when stdin is a tty (piped input behaves as before). `signals.cpp` catches SIGINT with a
+handler that writes one byte to a non-blocking pipe, catches SIGQUIT with a no-op and ignores
+SIGTSTP. Readline's own signal handling is off (`rl_catch_signals = 0`) and its character reader
+is replaced (`read_char` in `completion.cpp`) by a `poll` on the terminal and that pipe, so
+Ctrl-C at the prompt discards the line at once and sets `$?` to 130. Ctrl-\ and Ctrl-Z at the
+prompt do nothing. SIGINT and SIGQUIT are caught, not ignored, because `exec` resets caught
+signals to the default for the programs the shell starts (an ignored signal would stay ignored).
+SIGTSTP is a stop-gap until job control exists.
+
+`prompt_was_interrupted()` (`completion.hpp`) tells `Shell::run` that the last `readline()` ended
+because of Ctrl-C; reading it clears it, and `read_line` clears it before every prompt so a stale
+flag can never drop a later line. Readline is not always at a plain prompt when Ctrl-C arrives:
+after ESC or Ctrl-X, or in a Ctrl-R search, a `'\n'` is taken as one more key (ESC Ctrl-J even
+switches to vi mode) and the line would not end. So the reader first returns Ctrl-G, which aborts
+all of those states (its bell is muted by setting `bell-style` to `none` until the next call), and
+returns the `'\n'` that ends the empty line on its next call.
+
+While a foreground command or pipeline runs, the tty sends Ctrl-C (SIGINT) and Ctrl-\ (SIGQUIT)
+to the whole foreground process group, which is still the shell's own group (the shell itself
+survives because it catches both). Programs end with the default action, so `$?` is 130 or 131; a
+program that handles the signal and exits by itself keeps its own status. Every `waitpid` retries
+on `EINTR`, and a pipeline waits for all its stages. `Outcome::interrupted` tells `Shell::run`
+that something ended by SIGINT/SIGQUIT; it then prints one `\n` (only on a tty, after the
+redirects are undone), because the prompt would otherwise start mid-line. The `^C` itself is
+echoed by the terminal, not by the shell. Limitation: bash also prints `Quit (core dumped)` after
+Ctrl-\; this shell does not. Ctrl-Z does nothing (SIGTSTP is ignored, inherited by programs):
+a stop-gap until job control, which is planned as the next feature and will replace it.
+
+Background jobs (`&`) get their own process group when the shell is interactive (`spawn()`
+calls `setpgid` in both parent and child), so terminal keys never reach them; they stay `Running`
+in `jobs`. Limitation: a background job that reads the terminal is stopped by SIGTTIN (it is not
+in the foreground group) while `jobs` still prints `Running`; job control will fix that.
+
+A completion script (`complete -C`) runs in its own process group. While the shell waits for its
+output (`capture_lines`) it polls the script's pipe and the Ctrl-C wake-up pipe: Ctrl-C kills the
+group, applies no completion and leaves the line as typed. There is still no timeout.
 
 ## 3. Life of one input line
 
