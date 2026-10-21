@@ -1,6 +1,7 @@
 #include "shell.hpp"
 
 #include "completion.hpp"
+#include "job_control.hpp"
 #include "job_table.hpp"
 #include "parser.hpp"
 #include "runner.hpp"
@@ -42,21 +43,13 @@ namespace
     free(line);
     return true;
   }
-
-  // Registers a background job under the line as typed and announces it.
-  // Printed after the command's redirects have been undone.
-  void announce_job(const std::string &input, pid_t pid)
-  {
-    const auto first = input.find_first_not_of(" \t");
-    const auto last = input.find_last_not_of(" \t");
-    int number = add_job(pid, input.substr(first, last - first + 1));
-    std::cout << '[' << number << "] " << pid << std::endl;
-  }
 }
 
 void Shell::run()
 {
   setup_interactive_signals();
+  init_job_control();
+  set_stop_tracking(job_control_active());
   init_readline();
 
   while (true)
@@ -67,6 +60,16 @@ void Shell::run()
     std::string input;
     if (!read_line(input))
     {
+      // Ctrl-D: with Stopped jobs the first attempt only warns. The cursor is still after the
+      // prompt, hence the newline.
+      if (is_interactive() && !exit_refused_ && has_stopped_jobs())
+      {
+        std::cout << "\nThere are stopped jobs." << std::endl;
+        last_status_ = 1;
+        exit_refused_ = true;
+        continue;
+      }
+      end_stopped_jobs();
       break;
     }
 
@@ -77,6 +80,9 @@ void Shell::run()
       continue;
     }
 
+    const bool exit_was_refused = exit_refused_;
+    exit_refused_ = false;
+
     std::string error;
     auto pipeline = parse_pipeline(input, last_status_, error);
     if (!pipeline)
@@ -86,7 +92,7 @@ void Shell::run()
       continue;
     }
 
-    Outcome outcome = run_pipeline(*pipeline);
+    Outcome outcome = run_pipeline(*pipeline, input);
     last_status_ = outcome.status;
     // The terminal shows nothing of its own after a command killed by Ctrl-C or Ctrl-\, so
     // the prompt would start mid-line. Only on a terminal: piped output stays as before.
@@ -94,12 +100,25 @@ void Shell::run()
     {
       std::cout << '\n';
     }
-    if (outcome.job_pid > 0)
+    if (outcome.stopped_job > 0)
     {
-      announce_job(input, outcome.job_pid);
+      // The terminal echoed ^Z without a newline.
+      std::cout << '\n' << format_job_line(*find_job(outcome.stopped_job)) << std::endl;
+    }
+    if (outcome.job_number > 0)
+    {
+      std::cout << '[' << outcome.job_number << "] " << outcome.job_pid << std::endl;
     }
     if (outcome.exit)
     {
+      if (is_interactive() && !exit_was_refused && has_stopped_jobs())
+      {
+        std::cout << "There are stopped jobs." << std::endl;
+        last_status_ = 1;
+        exit_refused_ = true;
+        continue;
+      }
+      end_stopped_jobs();
       break;
     }
   }

@@ -9,8 +9,11 @@ import select
 import shutil
 import signal
 import subprocess
+import re
 import tempfile
+import termios
 import time
+import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SHELL_BIN = os.path.join(ROOT, "build", "shell")
@@ -24,6 +27,59 @@ CTRL_X = b"\x18"
 CTRL_R = b"\x12"
 
 PROMPT = "$ "
+
+
+class ShellTestCase(unittest.TestCase):
+    """One fresh shell per test as `self.shell`, closed afterwards."""
+
+    def setUp(self):
+        self.shell = Shell()
+        self.addCleanup(self.shell.close)
+
+
+def _pids(pattern):
+    result = subprocess.run(["pgrep", "-f", "^" + pattern + "$"], capture_output=True, text=True)
+    return result.stdout.split()
+
+
+def process_running(pattern):
+    # Anchored: an unanchored pattern also matches any shell whose command line mentions it.
+    return bool(_pids(pattern))
+
+
+def process_stopped(pattern):
+    """True if a process whose command line is `pattern` is stopped (state T)."""
+    for pid in _pids(pattern):
+        state = subprocess.run(["ps", "-o", "stat=", "-p", pid], capture_output=True, text=True)
+        if state.stdout.strip().startswith("T"):
+            return True
+    return False
+
+
+def wait_for(condition, timeout=2.0):
+    """Polls `condition()` until it is true or `timeout` passes; returns its last value. For
+    things that happen on their own schedule (a process reaching its first read), so a loaded
+    machine cannot make a test flaky."""
+    deadline = time.monotonic() + timeout
+    while not condition() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return condition()
+
+
+def process_gone(pid):
+    """True when `ps` knows no such process; a zombie (state Z) still shows up, so it is not."""
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+    return state.stdout.strip() == ""
+
+
+def normalise_pids(text):
+    """`[1] 12345` becomes `[1] PID`."""
+    return re.sub(r"(\[\d+\] )\d+", r"\1PID", text)
+
+
+def job_line(number, state, command, marker="+"):
+    """A line of `jobs` output without `&` handling and without the newline."""
+    return "[%d]%s  %-24s%s" % (number, marker, state, command)
 
 
 class Shell:
@@ -99,6 +155,27 @@ class Shell:
         out = self.expect(PROMPT, timeout)
         out = out[len(line) + 1:] if out.startswith(line + "\n") else out
         return out[:-len(PROMPT)]
+
+    def start(self, line):
+        """Starts a foreground command and gives it time to exec (no prompt comes back)."""
+        self.send(line + "\n")
+        time.sleep(0.2)
+        self.drain(0.05)
+
+    def termios_snapshot(self):
+        """The terminal's attributes as the shell and its children see them."""
+        return termios.tcgetattr(self.fd)
+
+    def snapshot_during(self, line):
+        """The terminal attributes while `line` runs in the foreground (Ctrl-C ends it)."""
+        self.start(line)
+        snapshot = self.termios_snapshot()
+        self.send(CTRL_C)
+        self.expect(PROMPT)
+        return snapshot
+
+    def echo_enabled(self):
+        return bool(self.termios_snapshot()[3] & termios.ECHO)
 
     def status(self):
         return int(self.run("echo $?").strip())

@@ -1,0 +1,8 @@
+fg
+echo $?
+bg
+echo $?
+jobs
+type fg
+type bg
+exit

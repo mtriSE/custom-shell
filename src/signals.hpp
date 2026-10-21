@@ -5,9 +5,12 @@
 
 // Call once at start-up. If stdin is a tty: remembers interactive mode, creates the
 // wake-up pipe, catches SIGINT (writes one byte to the pipe) and SIGQUIT (does nothing),
-// and ignores SIGTSTP (stop-gap until job control exists). Otherwise does nothing.
+// and ignores SIGTSTP, SIGTTIN and SIGTTOU (the shell must not stop at the prompt, and must
+// be able to take the terminal back). Otherwise does nothing.
 // SIGINT and SIGQUIT are caught, not ignored, so exec resets them to the default in
-// every program the shell starts: Ctrl-C and Ctrl-\ still end those programs.
+// every program the shell starts: Ctrl-C and Ctrl-\ still end those programs. The three
+// ignored signals would stay ignored across exec, so children reset them explicitly with
+// reset_child_signals().
 void setup_interactive_signals();
 
 // True if setup_interactive_signals() found a tty.
@@ -23,6 +26,7 @@ bool take_interrupt();
 // pressed while a command ran is not taken as an interrupt of the next line.
 void discard_interrupt();
 
-// For a forked child that will not exec at once (a builtin stage of a pipeline):
-// SIGINT and SIGQUIT back to their defaults.
+// For every forked child, before it execs or runs a builtin stage: SIGINT, SIGQUIT, SIGTSTP,
+// SIGTTIN and SIGTTOU back to their defaults (so Ctrl-Z stops the child and a background
+// child that reads the terminal is stopped).
 void reset_child_signals();

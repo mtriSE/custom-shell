@@ -1,6 +1,7 @@
 #include "builtins.hpp"
 
 #include "completer_registry.hpp"
+#include "job_control.hpp"
 #include "job_table.hpp"
 #include "path_utils.hpp"
 
@@ -206,6 +207,83 @@ namespace
     return {};
   }
 
+  // `fg` and `bg` have no jobs to act on with piped input or in a pipeline stage (whose copy of
+  // the table is not the shell's): they say so and fail.
+  bool job_control_or_complain(const std::string &name)
+  {
+    if (job_control_available())
+    {
+      return true;
+    }
+    std::cerr << name << ": no job control" << std::endl;
+    return false;
+  }
+
+  // Continues a job in the foreground (the first one named, or the current job): prints its
+  // command line (without `&`), waits, and returns its status (148 if it is stopped again, which
+  // Shell::run then reports).
+  BuiltinResult builtin_fg(const Args &args)
+  {
+    if (!job_control_or_complain("fg"))
+    {
+      return {.status = 1};
+    }
+    std::string error;
+    Job *job = resolve_job(args.size() > 1 ? args[1] : "", error);
+    if (job == nullptr)
+    {
+      std::cerr << "fg: " << error << std::endl;
+      return {.status = 1};
+    }
+    const int number = job->number;
+    std::cout << job->command << std::endl;
+    const ForegroundResult result = resume(*job, true);
+    if (result.stopped)
+    {
+      return {.status = result.status, .stopped_job = number};
+    }
+    remove_job(number);
+    return {.status = result.status, .interrupted = result.interrupted};
+  }
+
+  // Continues each job named (or the current job) in the background and prints
+  // `[N]<marker> <command> &` for it, with the markers as they were before any was resumed.
+  BuiltinResult builtin_bg(const Args &args)
+  {
+    if (!job_control_or_complain("bg"))
+    {
+      return {.status = 1};
+    }
+    const std::vector<std::string> specs = args.size() > 1 ? Args(args.begin() + 1, args.end()) : Args{""};
+    std::vector<std::pair<Job *, char>> chosen;
+    int status = 0;
+    for (const auto &spec : specs)
+    {
+      std::string error;
+      Job *job = resolve_job(spec, error);
+      if (job == nullptr)
+      {
+        std::cerr << "bg: " << error << std::endl;
+        status = 1;
+        continue;
+      }
+      chosen.emplace_back(job, job_marker(*job));
+    }
+    for (const auto &[job, marker] : chosen)
+    {
+      if (job->state() == JobState::Running)
+      {
+        std::cerr << "bg: job " << job->number << " already in background" << std::endl;
+        continue;
+      }
+      resume(*job, false);
+      // bash prints no marker character at all for a job that is neither current nor previous.
+      std::cout << '[' << job->number << ']' << (marker == ' ' ? "" : std::string(1, marker)) << ' '
+                << job->command << " &" << std::endl;
+    }
+    return {.status = status};
+  }
+
   // Keep last: add each new builtin_* above, then one line here.
   const std::unordered_map<std::string, Handler> &registry()
   {
@@ -215,6 +293,8 @@ namespace
         {"type", builtin_type},
         {"complete", builtin_complete},
         {"jobs", builtin_jobs},
+        {"fg", builtin_fg},
+        {"bg", builtin_bg},
         {"pwd", builtin_pwd},
         {"cd", builtin_cd},
     };

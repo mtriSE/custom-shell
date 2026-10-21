@@ -46,40 +46,8 @@ void exec_replace(const std::filesystem::path &exe, const std::vector<std::strin
   _exit(127);
 }
 
-int execute(const std::filesystem::path &exe, const std::vector<std::string> &args,
-            bool &interrupted)
-{
-  interrupted = false;
-  std::vector<std::string> storage = args;
-  std::vector<char *> argv = build_argv(storage);
-
-  pid_t pid = fork();
-  if (pid < 0)
-  {
-    perror("fork");
-    return 1;
-  }
-
-  if (pid == 0)
-  {
-    // Not the shell's handlers while still between fork and exec.
-    reset_child_signals();
-    execv(exe.c_str(), argv.data());
-    perror(exe.c_str());
-    _exit(127);
-  }
-
-  int status = 0;
-  wait_for(pid, &status);
-  if (WIFEXITED(status))
-  {
-    return WEXITSTATUS(status);
-  }
-  interrupted = WTERMSIG(status) == SIGINT || WTERMSIG(status) == SIGQUIT;
-  return 128 + WTERMSIG(status);
-}
-
-pid_t spawn(const std::filesystem::path &exe, const std::vector<std::string> &args)
+pid_t start_process(const std::filesystem::path &exe, const std::vector<std::string> &args,
+                    pid_t pgid)
 {
   std::vector<std::string> storage = args;
   std::vector<char *> argv = build_argv(storage);
@@ -92,19 +60,21 @@ pid_t spawn(const std::filesystem::path &exe, const std::vector<std::string> &ar
   }
   if (pid == 0)
   {
+    // Not the shell's dispositions while still between fork and exec.
     reset_child_signals();
-    if (is_interactive())
+    if (pgid >= 0)
     {
-      setpgid(0, 0);
+      setpgid(0, pgid);
     }
     execv(exe.c_str(), argv.data());
     perror(exe.c_str());
     _exit(127);
   }
-  if (is_interactive())
+  if (pgid >= 0)
   {
-    // Also done in the child: whichever runs first wins, so the group exists either way.
-    setpgid(pid, pid);
+    // Also done in the child: whichever runs first wins, so the group exists before either
+    // goes on. (It fails harmlessly with EACCES once the child has exec'd.)
+    setpgid(pid, pgid == 0 ? pid : pgid);
   }
   return pid;
 }
