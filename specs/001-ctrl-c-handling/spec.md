@@ -77,7 +77,8 @@ immediately and `echo $?` prints `130`.
    is not itself interrupted and Ctrl-C works again for it.
 5. **Given** `sleep 100` is running in the foreground, **When** the user presses Ctrl-Z, **Then**
    nothing visible happens: the command keeps running and the shell does not hang; a following
-   Ctrl-C still ends the command and returns to the prompt.
+   Ctrl-C still ends the command and returns to the prompt. *(Replaced by feature 002-job-control:
+   Ctrl-Z now stops the command.)*
 
 ---
 
@@ -167,7 +168,7 @@ work the user deliberately left running, or freeze the shell.
 - **FR-014**: While a foreground command or pipeline is running on a terminal, pressing Ctrl-Z
   MUST have no effect on it or on the shell (it is not stopped, and the shell is not left waiting
   on a stopped command). This is a temporary rule: it MUST be replaced when job control is added
-  (see Assumptions).
+  (see Assumptions). *(Replaced by feature 002-job-control.)*
 - **FR-015**: While a TAB-completion script is running on a terminal, pressing Ctrl-C MUST stop
   that script, apply no completion for that attempt, leave the line being edited unchanged, and
   keep the shell running (status `$?` is not changed by this).

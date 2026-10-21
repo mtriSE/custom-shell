@@ -32,6 +32,11 @@ create files (`> out.txt`) without dirtying the repo. When you change behaviour
 on purpose, run `--update` and **read the `.out` diff by eye** before
 committing: `--update` accepts any output, including wrong output.
 
+The pid in a background announcement (`[1] 12345`) is replaced by `PID` before the diff, so a case
+can cover `&` and `jobs` (`.out` files contain `[1] PID`). Only that line shape is rewritten: the
+whole line, or right after the piped `$ ` prompt. The one clock dependency in the suite is
+`jobs_done`: a job that exits at once is given 0.5 s to be reaped before the next prompt reports it.
+
 ### Terminal tests
 
 [tests/pty/](tests/pty/) runs `build/shell` on a pseudo-terminal (`harness.py`), sends keystrokes
@@ -48,9 +53,12 @@ cannot, because stdin is a pipe there.
 | [src/shell.cpp](src/shell.cpp) | REPL loop, applies redirects, dispatches to builtin or external program. Owns `last_status_` (the value of `$?`). |
 | [src/parser.cpp](src/parser.cpp), [parser.hpp](src/parser.hpp) | Turns a line of text into a `Command` (`args` + `redirects`). |
 | [src/redirect.cpp](src/redirect.cpp), [redirect.hpp](src/redirect.hpp) | `FdRedirect`: redirects one fd and restores it automatically (RAII). |
-| [src/builtins.cpp](src/builtins.cpp), [builtins.hpp](src/builtins.hpp) | Built-in commands: `exit`, `echo`, `type`. |
-| [src/executor.cpp](src/executor.cpp) | `fork` + `execv` + `waitpid` for external programs. |
-| [src/signals.cpp](src/signals.cpp), [signals.hpp](src/signals.hpp) | Terminal signals when stdin is a tty: Ctrl-C wake-up pipe, SIGINT/SIGQUIT/SIGTSTP set-up. No dependency on other modules or readline. |
+| [src/runner.cpp](src/runner.cpp), [runner.hpp](src/runner.hpp) | `run_pipeline`: runs a parsed line. A lone builtin runs in the shell; any other command or pipeline is started as one job (one process group) and waited for. |
+| [src/builtins.cpp](src/builtins.cpp), [builtins.hpp](src/builtins.hpp) | Built-in commands: `exit`, `echo`, `type`, `pwd`, `cd`, `complete`, `jobs`, `fg`, `bg`. |
+| [src/executor.cpp](src/executor.cpp) | `start_process`: `fork` + `setpgid` + `execv` for external programs (never waits); `capture_lines` for completion scripts. |
+| [src/job_table.cpp](src/job_table.cpp), [job_table.hpp](src/job_table.hpp) | The job table: jobs with their processes and state (`Running`/`Stopped`/`Done`), numbers, the `+`/`-` ranking, the `jobs` format. Pure data and rules, no terminal calls. |
+| [src/job_control.cpp](src/job_control.cpp), [job_control.hpp](src/job_control.hpp) | Terminal ownership and waiting: takes the terminal at start-up, hands it to the foreground job and back (restoring the shell's modes), waits with `WUNTRACED`, resumes jobs with `SIGCONT`. |
+| [src/signals.cpp](src/signals.cpp), [signals.hpp](src/signals.hpp) | Terminal signals when stdin is a tty: Ctrl-C wake-up pipe, SIGINT/SIGQUIT set-up, SIGTSTP/SIGTTIN/SIGTTOU ignored in the shell, `reset_child_signals()`. No dependency on other modules or readline. |
 | [src/completion.cpp](src/completion.cpp) | Readline set-up: completion hooks and the interruptible character reader. |
 | [src/path_utils.cpp](src/path_utils.cpp) | `find_in_path`: looks up an executable in `$PATH`. |
 
@@ -61,12 +69,14 @@ Dependencies point one way: `shell` uses every other module; `parser`,
 
 Only when stdin is a tty (piped input behaves as before). `signals.cpp` catches SIGINT with a
 handler that writes one byte to a non-blocking pipe, catches SIGQUIT with a no-op and ignores
-SIGTSTP. Readline's own signal handling is off (`rl_catch_signals = 0`) and its character reader
+SIGTSTP, SIGTTIN and SIGTTOU. Readline's own signal handling is off (`rl_catch_signals = 0`) and its character reader
 is replaced (`read_char` in `completion.cpp`) by a `poll` on the terminal and that pipe, so
 Ctrl-C at the prompt discards the line at once and sets `$?` to 130. Ctrl-\ and Ctrl-Z at the
 prompt do nothing. SIGINT and SIGQUIT are caught, not ignored, because `exec` resets caught
 signals to the default for the programs the shell starts (an ignored signal would stay ignored).
-SIGTSTP is a stop-gap until job control exists.
+The three ignored ones (the shell must not stop at the prompt, and must be able to take the
+terminal back) would stay ignored across `exec` too, so `reset_child_signals()` resets all five in
+every child.
 
 `prompt_was_interrupted()` (`completion.hpp`) tells `Shell::run` that the last `readline()` ended
 because of Ctrl-C; reading it clears it, and `read_line` clears it before every prompt so a stale
@@ -76,21 +86,71 @@ switches to vi mode) and the line would not end. So the reader first returns Ctr
 all of those states (its bell is muted by setting `bell-style` to `none` until the next call), and
 returns the `'\n'` that ends the empty line on its next call.
 
-While a foreground command or pipeline runs, the tty sends Ctrl-C (SIGINT) and Ctrl-\ (SIGQUIT)
-to the whole foreground process group, which is still the shell's own group (the shell itself
-survives because it catches both). Programs end with the default action, so `$?` is 130 or 131; a
-program that handles the signal and exits by itself keeps its own status. Every `waitpid` retries
-on `EINTR`, and a pipeline waits for all its stages. `Outcome::interrupted` tells `Shell::run`
-that something ended by SIGINT/SIGQUIT; it then prints one `\n` (only on a tty, after the
-redirects are undone), because the prompt would otherwise start mid-line. The `^C` itself is
-echoed by the terminal, not by the shell. Limitation: bash also prints `Quit (core dumped)` after
-Ctrl-\; this shell does not. Ctrl-Z does nothing (SIGTSTP is ignored, inherited by programs):
-a stop-gap until job control, which is planned as the next feature and will replace it.
+### Job control
 
-Background jobs (`&`) get their own process group when the shell is interactive (`spawn()`
-calls `setpgid` in both parent and child), so terminal keys never reach them; they stay `Running`
-in `jobs`. Limitation: a background job that reads the terminal is stopped by SIGTTIN (it is not
-in the foreground group) while `jobs` still prints `Running`; job control will fix that.
+Only when stdin is a tty (`job_control_active()`); with piped input there are no process groups,
+no terminal calls and nothing can stop. Every external command or pipeline is a *job* and runs in
+its own process group: `start_process` calls `setpgid` in the child and the parent (so the group
+exists before either goes on); the stages of a pipeline join the group of the first one.
+
+A foreground job is in the job table while it runs. `wait_foreground` hands the terminal to its
+group (`tcsetpgrp`), waits with `waitpid(-pgid, WUNTRACED)` until the job is `Done` or `Stopped`,
+then takes the terminal back and restores the terminal modes the shell found at start-up (all in an
+RAII object, `TerminalHandoff`, so no path leaves the shell without the terminal). The shell
+ignores SIGTTOU, which is what lets it call `tcsetpgrp`/`tcsetattr` while it is not in front. Only
+the group in front receives Ctrl-C, Ctrl-\ and Ctrl-Z from the tty, so `$?` is 130 or 131 for the
+first two as before; a program that handles the signal and exits by itself keeps its own status.
+`Outcome::interrupted` tells `Shell::run` that something ended by SIGINT/SIGQUIT; it then prints
+one `\n` (only on a tty, after the redirects are undone), because the prompt would otherwise start
+mid-line. The `^C` itself is echoed by the terminal, not by the shell. Limitation: bash also prints
+`Quit (core dumped)` after Ctrl-\; this shell does not.
+
+Ctrl-Z stops every process of the job. The job stays in the table as `Stopped`, its terminal modes
+are saved in `Job::modes`, `$?` is 148 (128 + SIGTSTP) and `Shell::run` prints
+`\n[N]+  Stopped                 <command>` once the command's redirects are undone (the terminal
+echoed `^Z` without a newline). A job that ended leaves the table without a report; its status
+becomes `$?`. `fg` restores the job's own modes, sends SIGCONT to its group and waits again (a job
+stopped again keeps its number); `bg` sends SIGCONT and leaves it running in the background. Both
+act on the current job (`+`), which is the most recently stopped job, or else the most recently
+backgrounded one; `-` is the next one by the same ranking.
+
+`fg` and `bg` take job specs: nothing or `%%` or `%+` (the current job), `%-` (the previous job),
+`%N` or `N` (job number N), resolved by `resolve_job()` in `job_table.cpp`. `fg` uses the first
+spec given and ignores the rest; `bg` takes several and prints one line per job (markers as they
+were before any was resumed, and no marker character for a job that is neither current nor
+previous, as in bash). Errors are one line on stderr with `$?` 1, without bash's `bash: ` prefix:
+`fg: current: no such job` (no job), `fg: <spec as typed>: no such job` (also for a job already
+reported `Done`, and for unsupported specs such as `%name`); `bg` on a running job prints
+`bg: job N already in background` and returns 0. With piped input, or as a stage of a pipeline
+(whose copy of the table is not the shell's, `leave_job_control()`), both print
+`fg: no job control` / `bg: no job control` and return 1. `type fg` and `type bg` say they are
+shell builtins. Limitations: no `%string` or `%?string` specs.
+
+Job control limitations (each pinned by a test in `tests/pty/test_job_control.py`): every job that
+ends is reported as plain `Done`, never `Exit N` or `Terminated`; `wait`, `disown`, `suspend`, a
+`kill` that takes `%N`, `jobs` options and `set -m` do not exist; `fg` and `bg` take no `%string`
+specs; `exit` is not echoed before the warning or before leaving; the `Stopped` notice of a
+background job is printed at the next prompt, not asynchronously, so unlike bash there is no blank line before it. Not testable through the
+harness: a shell started in the background of another shell takes the terminal instead of waiting
+for it, as bash does.
+
+Leaving the shell with a `Stopped` job: the first `exit` (or Ctrl-D on an empty line) prints
+`There are stopped jobs.` (after a newline for Ctrl-D, since the cursor is still after the prompt),
+sets `$?` to 1 and stays. If the very next line is again an exit request the shell leaves, after
+`end_stopped_jobs()` sent SIGHUP then SIGCONT to each stopped job's group (a stopped process acts on
+SIGHUP only once continued) without waiting for them. Any other line clears the warning
+(`Shell::exit_refused_`). Jobs that are still `Running` in the background are not signalled and
+keep running. Unlike bash, the shell does not echo `exit` first.
+
+Background jobs (`&`), single commands and pipelines alike (`a | b &` is one job, its `[N] pid`
+shows the pid of the last stage), are started in their own process group too, so terminal keys never
+reach them. They are not waited for: the job table reaps them with a non-blocking `waitpid`
+(`WNOHANG | WUNTRACED | WCONTINUED` on a terminal) before each prompt and in `jobs`, so a job's
+state is first noticed there, as in bash. A background job that reads the terminal is stopped by
+SIGTTIN and shows as `Stopped` (printed once before the next prompt, listed by `jobs`); `fg` lets it
+read. Every ended job is reported once as `Done`, whatever its status (no `Exit N` or
+`Terminated`). Without a terminal there are no process groups and the stages stay in the shell's
+group.
 
 A completion script (`complete -C`) runs in its own process group. While the shell waits for its
 output (`capture_lines`) it polls the script's pipe and the Ctrl-C wake-up pipe: Ctrl-C kills the

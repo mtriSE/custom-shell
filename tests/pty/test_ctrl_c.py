@@ -6,13 +6,7 @@ import time
 import unittest
 
 from harness import (CTRL_BACKSLASH, CTRL_C, CTRL_D, CTRL_R, CTRL_X, CTRL_Z, ESC, PROMPT,
-                     SHELL_BIN, Shell)
-
-
-class ShellTestCase(unittest.TestCase):
-    def setUp(self):
-        self.shell = Shell()
-        self.addCleanup(self.shell.close)
+                     SHELL_BIN, ShellTestCase, process_running)
 
 
 class PromptTests(ShellTestCase):
@@ -69,19 +63,7 @@ class PromptTests(ShellTestCase):
         self.assertEqual(self.shell.wait_exit(), 0)
 
 
-def process_running(pattern):
-    # Anchored: an unanchored pattern also matches any shell whose command line mentions it.
-    return subprocess.run(["pgrep", "-f", "^" + pattern + "$"],
-                          stdout=subprocess.DEVNULL).returncode == 0
-
-
 class ForegroundTests(ShellTestCase):
-    def start(self, line):
-        """Starts a foreground command and gives it time to exec (no prompt comes back)."""
-        self.shell.send(line + "\n")
-        time.sleep(0.2)
-        self.shell.drain(0.05)
-
     def end_with(self, key, timeout=1.0):
         """Sends a key and waits for the prompt; returns the output with the terminal's own
         echo of the key (^C, ^\\) removed."""
@@ -90,55 +72,47 @@ class ForegroundTests(ShellTestCase):
         return out.replace("^C", "").replace("^\\", "")
 
     def test_ctrl_c_ends_a_foreground_command(self):
-        self.start("sleep 100")
+        self.shell.start("sleep 100")
         self.assertEqual(self.end_with(CTRL_C), "\n" + PROMPT)  # one newline, then the prompt
         self.assertTrue(self.shell.alive())
         self.assertEqual(self.shell.status(), 130)
 
     def test_ctrl_c_ends_every_stage_of_a_pipeline(self):
-        self.start("sleep 101 | cat")
+        self.shell.start("sleep 101 | cat")
         self.end_with(CTRL_C)
         self.assertEqual(self.shell.status(), 130)
         self.assertFalse(process_running("sleep 101"))
 
     def test_next_command_is_not_affected(self):
-        self.start("sleep 100")
+        self.shell.start("sleep 100")
         self.end_with(CTRL_C)
         self.assertEqual(self.shell.run("echo ok"), "ok\n")
         self.assertEqual(self.shell.status(), 0)
-        self.start("sleep 100")
+        self.shell.start("sleep 100")
         self.end_with(CTRL_C)
         self.assertEqual(self.shell.status(), 130)
 
     def test_ctrl_backslash_gives_131(self):
-        self.start("sleep 100")
+        self.shell.start("sleep 100")
         self.end_with(CTRL_BACKSLASH)
         self.assertTrue(self.shell.alive())
         self.assertEqual(self.shell.status(), 131)
 
-    def test_ctrl_z_has_no_effect_on_a_running_command(self):
-        self.start("sleep 100")
-        self.shell.send(CTRL_Z)
-        time.sleep(0.2)
-        self.assertEqual(self.shell.drain(0.1).replace("^Z", ""), "")  # no prompt: still running
-        self.end_with(CTRL_C)
-        self.assertEqual(self.shell.status(), 130)
-
     def test_interrupt_with_a_redirect_restores_the_shell(self):
-        self.start("sleep 100 > out.txt")
+        self.shell.start("sleep 100 > out.txt")
         self.end_with(CTRL_C)
         self.assertEqual(self.shell.run("echo back"), "back\n")
         self.assertEqual(os.path.getsize(os.path.join(self.shell.cwd, "out.txt")), 0)
 
     def test_a_command_that_handles_ctrl_c_keeps_its_own_status(self):
-        self.start("sh -c 'trap \"exit 7\" INT; sleep 100 & wait'")
+        self.shell.start("sh -c 'trap \"exit 7\" INT; sleep 100 & wait'")
         self.end_with(CTRL_C)
         self.assertEqual(self.shell.status(), 7)
 
     def test_twenty_interrupted_commands(self):
         self.shell.run("cd /usr")
         for _ in range(20):
-            self.start("sleep 100")
+            self.shell.start("sleep 100")
             self.end_with(CTRL_C)
         self.assertTrue(self.shell.alive())
         self.assertEqual(self.shell.run("pwd"), "/usr\n")

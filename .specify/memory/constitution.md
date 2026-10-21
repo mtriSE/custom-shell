@@ -19,8 +19,8 @@ behaviour covers output text, error messages, ordering and exit statuses.
 - Redirects apply left to right (`2>&1 > f` differs from `> f 2>&1`) and apply uniformly to
   builtins, external programs and unknown commands.
 - A deviation from bash is allowed only as an explicit, documented limitation (today: `>>&`
-  unsupported, `a | b &` runs in the foreground, `~` expands only in `cd`, no variables or
-  globbing). Each limitation MUST be listed in CONTRIBUTING.md and be covered by a test that pins
+  unsupported, `~` expands only in `cd`, no variables or globbing, every ended job is plain
+  `Done`, no `%string` job specs). Each limitation MUST be listed in CONTRIBUTING.md and be covered by a test that pins
   the current behaviour.
 
 Rationale: users bring bash habits. A shell that is "almost" right is worse than one that is
@@ -321,4 +321,4 @@ first; new code MUST NOT add to them. The constitution is re-read at the start o
 checked for drift after every five merged features or whenever a principle is cited as the reason
 for a rejected change.
 
-**Version**: 1.1.0 | **Ratified**: 2026-10-18 | **Last Amended**: 2026-10-19
+**Version**: 1.1.1 | **Ratified**: 2026-10-18 | **Last Amended**: 2026-10-21

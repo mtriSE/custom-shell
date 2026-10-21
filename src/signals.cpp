@@ -50,9 +50,12 @@ void setup_interactive_signals()
   install(SIGINT, on_sigint);
   // Caught with a no-op, not SIG_IGN: an ignored signal stays ignored across exec.
   install(SIGQUIT, on_sigquit);
-  // Ignored (and inherited) on purpose until job control exists: a stopped child would
-  // leave the shell waiting on it with nothing able to resume it.
+  // The shell must not stop at the prompt (Ctrl-Z does nothing there) and must be able to
+  // hand the terminal to a job and take it back from the background (SIGTTOU), so these
+  // three are ignored in the shell only; children reset them (reset_child_signals).
   signal(SIGTSTP, SIG_IGN);
+  signal(SIGTTIN, SIG_IGN);
+  signal(SIGTTOU, SIG_IGN);
 }
 
 bool is_interactive()
@@ -101,4 +104,7 @@ void reset_child_signals()
 {
   signal(SIGINT, SIG_DFL);
   signal(SIGQUIT, SIG_DFL);
+  signal(SIGTSTP, SIG_DFL);
+  signal(SIGTTIN, SIG_DFL);
+  signal(SIGTTOU, SIG_DFL);
 }

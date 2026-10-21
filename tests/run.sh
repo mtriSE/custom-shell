@@ -2,6 +2,8 @@
 # Runs every tests/cases/*.in through ./build/shell (stdout+stderr merged) in a
 # scratch directory (with HOME=/usr) and diffs the result against the matching .out file.
 # Then runs the terminal tests (tests/pty/run.sh, needs python3); --update skips them.
+# The pid in a background announcement (`[1] 12345`) is replaced by `PID` before the diff, so
+# cases can cover `&` without depending on pids.
 # Usage: tests/run.sh [--update]   (--update rewrites the .out files)
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="$ROOT/build/shell"
@@ -14,7 +16,9 @@ fail=0
 for input in "$CASES"/*.in; do
   name="$(basename "$input" .in)"
   work="$(mktemp -d)"
-  (cd "$work" && HOME=/usr "$BIN" < "$input" > actual.txt 2>&1)
+  (cd "$work" && HOME=/usr "$BIN" < "$input" > actual.raw 2>&1)
+  # Only the announcement line itself: at the start of a line or right after the piped prompt.
+  sed -E 's/(^|\$ )\[([0-9]+)\] [0-9]+$/\1[\2] PID/' "$work/actual.raw" > "$work/actual.txt"
 
   if [ "$update" = 1 ]; then
     cp "$work/actual.txt" "$CASES/$name.out"

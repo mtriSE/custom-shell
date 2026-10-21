@@ -2,6 +2,8 @@
 
 #include "builtins.hpp"
 #include "executor.hpp"
+#include "job_control.hpp"
+#include "job_table.hpp"
 #include "path_utils.hpp"
 #include "redirect.hpp"
 #include "signals.hpp"
@@ -61,7 +63,26 @@ namespace
     InChild,
   };
 
-  Outcome run_command(const Command &command, Mode mode)
+  // Process group for a new job's first process: a new group on a terminal, else none.
+  pid_t new_group()
+  {
+    return job_control_active() ? 0 : -1;
+  }
+
+  // Waits for a job that was just started in the foreground. A stopped job stays in the table;
+  // one that ended leaves it, its status becoming the command's.
+  Outcome finish_foreground(int number)
+  {
+    const ForegroundResult result = wait_foreground(*find_job(number));
+    if (result.stopped)
+    {
+      return {.status = result.status, .interrupted = result.interrupted, .stopped_job = number};
+    }
+    remove_job(number);
+    return {.status = result.status, .interrupted = result.interrupted};
+  }
+
+  Outcome run_command(const Command &command, Mode mode, const std::string &line)
   {
     // Applied before dispatch so it covers builtins, external programs and
     // unknown commands alike; undone when this function returns.
@@ -85,7 +106,10 @@ namespace
     if (is_builtin(args[0]))
     {
       auto result = run_builtin(args);
-      return {.exit = result.should_exit, .status = result.status};
+      return {.exit = result.should_exit,
+              .status = result.status,
+              .interrupted = result.interrupted,
+              .stopped_job = result.stopped_job};
     }
 
     if (auto exe = find_in_path(args[0]))
@@ -94,15 +118,17 @@ namespace
       {
         exec_replace(*exe, args);
       }
+      pid_t pid = start_process(*exe, args, new_group());
+      if (pid < 0)
+      {
+        return {.status = 1};
+      }
       if (mode == Mode::Background)
       {
-        // Not reaped yet (zombie until the shell exits); `jobs` will own that.
-        pid_t pid = spawn(*exe, args);
-        return pid < 0 ? Outcome{.status = 1} : Outcome{.job_pid = pid};
+        // Reaped later by the job table (a zombie until the next prompt or `jobs`).
+        return {.job_number = add_job(pid, {pid}, line, true), .job_pid = pid};
       }
-      bool interrupted = false;
-      int status = execute(*exe, args, interrupted);
-      return {.status = status, .interrupted = interrupted};
+      return finish_foreground(add_job(pid, {pid}, line, false));
     }
 
     std::cerr << args[0] << ": command not found" << std::endl;
@@ -113,11 +139,16 @@ namespace
   // neighbouring pipes (applied before the stage's own redirects, so `a > f | b`
   // leaves `b` with an empty input), and every pipe fd is closed afterwards.
   [[noreturn]] void run_stage(const Command &stage, int in_fd, int out_fd,
-                              const std::vector<int> &pipe_fds)
+                              const std::vector<int> &pipe_fds, pid_t pgid)
   {
-    // Builtins run in this process, so they must not keep the shell's handlers; programs
+    // Builtins run in this process, so they must not keep the shell's dispositions; programs
     // get the defaults at exec, but not yet while redirects are being applied.
     reset_child_signals();
+    leave_job_control();
+    if (pgid >= 0)
+    {
+      setpgid(0, pgid);
+    }
     if (in_fd >= 0)
     {
       dup2(in_fd, STDIN_FILENO);
@@ -130,15 +161,15 @@ namespace
     {
       close(fd);
     }
-    Outcome outcome = run_command(stage, Mode::InChild);
+    Outcome outcome = run_command(stage, Mode::InChild, "");
     std::cout.flush();
     _exit(outcome.status);
   }
 
-  // Starts every stage at once and waits for all of them; the status is the last
-  // stage's. The parent must close its pipe ends before waiting, or a reader
-  // never sees EOF.
-  Outcome run_stages(const std::vector<Command> &stages)
+  // Starts every stage at once, all in one process group, and waits for all of them; the status
+  // is the last stage's. The parent must close its pipe ends before waiting, or a reader never
+  // sees EOF.
+  Outcome run_stages(const std::vector<Command> &stages, const std::string &line, bool background)
   {
     std::vector<int> pipe_fds;
     for (size_t i = 0; i + 1 < stages.size(); ++i)
@@ -160,6 +191,9 @@ namespace
     std::vector<pid_t> pids;
     for (size_t i = 0; i < stages.size(); ++i)
     {
+      // The first stage leads the group, the others join it (the parent does the same call, so
+      // the group exists before either side goes on).
+      const pid_t group = !job_control_active() ? -1 : i == 0 ? 0 : pids[0];
       pid_t pid = fork();
       if (pid < 0)
       {
@@ -170,7 +204,11 @@ namespace
       {
         const int in_fd = i > 0 ? pipe_fds[2 * (i - 1)] : -1;
         const int out_fd = i + 1 < stages.size() ? pipe_fds[2 * i + 1] : -1;
-        run_stage(stages[i], in_fd, out_fd, pipe_fds);
+        run_stage(stages[i], in_fd, out_fd, pipe_fds, group);
+      }
+      if (group >= 0)
+      {
+        setpgid(pid, group == 0 ? pid : group);
       }
       pids.push_back(pid);
     }
@@ -180,37 +218,30 @@ namespace
       close(fd);
     }
 
-    Outcome outcome{.status = 1};
-    for (size_t i = 0; i < pids.size(); ++i)
+    if (pids.empty())
     {
-      int wstatus = 0;
-      pid_t waited;
-      do
-      {
-        waited = waitpid(pids[i], &wstatus, 0);
-      } while (waited < 0 && errno == EINTR);
-
-      const bool by_signal = WIFSIGNALED(wstatus);
-      if (by_signal && (WTERMSIG(wstatus) == SIGINT || WTERMSIG(wstatus) == SIGQUIT))
-      {
-        outcome.interrupted = true;
-      }
-      if (i + 1 == stages.size())
-      {
-        outcome.status = by_signal ? 128 + WTERMSIG(wstatus) : WEXITSTATUS(wstatus);
-      }
+      return {.status = 1};
+    }
+    if (background)
+    {
+      // Not waited for: the job table reaps it. The pid shown is the last stage's, as in bash.
+      return {.job_number = add_job(pids[0], pids, line, true), .job_pid = pids.back()};
+    }
+    Outcome outcome = finish_foreground(add_job(pids[0], pids, line, false));
+    if (pids.size() != stages.size())
+    {
+      outcome.status = 1; // a stage could not be started
     }
     return outcome;
   }
 }
 
-Outcome run_pipeline(const Pipeline &pipeline)
+Outcome run_pipeline(const Pipeline &pipeline, const std::string &line)
 {
   if (pipeline.stages.size() == 1)
   {
     return run_command(pipeline.stages[0],
-                       pipeline.background ? Mode::Background : Mode::Foreground);
+                       pipeline.background ? Mode::Background : Mode::Foreground, line);
   }
-  // `a | b &` is not supported yet: it runs in the foreground, without a job.
-  return run_stages(pipeline.stages);
+  return run_stages(pipeline.stages, line, pipeline.background);
 }

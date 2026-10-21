@@ -1,0 +1,7 @@
+$ fg: no job control
+$ 1
+$ bg: no job control
+$ 1
+$ $ fg is a shell builtin
+$ bg is a shell builtin
+$ 
