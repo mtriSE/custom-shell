@@ -15,7 +15,8 @@ struct ParsedRedirect
   int fd = 1; // 0-9, already checked
   Word target;
   bool append = false;
-  bool dup = false; // `>&N`: `target` names an fd to copy, not a file
+  bool dup = false;   // `>&N`: `target` names an fd to copy, not a file
+  bool input = false; // `<`: the file is opened for reading
 };
 
 struct ParsedCommand

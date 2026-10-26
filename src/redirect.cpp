@@ -20,13 +20,25 @@ namespace
   }
 }
 
-FdRedirect::FdRedirect(int fd, const std::string &path, bool append)
+FdRedirect::FdRedirect(int fd, const std::string &path, OpenMode mode)
     : fd_(fd)
 {
   std::cout.flush();
   std::cerr.flush();
 
-  int flags = O_WRONLY | O_CREAT | O_CLOEXEC | (append ? O_APPEND : O_TRUNC);
+  int flags = O_CLOEXEC;
+  switch (mode)
+  {
+  case OpenMode::Truncate:
+    flags |= O_WRONLY | O_CREAT | O_TRUNC;
+    break;
+  case OpenMode::Append:
+    flags |= O_WRONLY | O_CREAT | O_APPEND;
+    break;
+  case OpenMode::Read:
+    flags |= O_RDONLY;
+    break;
+  }
   int file_fd = open(path.c_str(), flags, 0644);
   if (file_fd < 0)
   {

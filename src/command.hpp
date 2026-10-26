@@ -14,6 +14,7 @@ struct Redirect
   std::string path;
   bool append = false; // false: `>` (truncate), true: `>>`
   int dup_from = -1;   // >= 0: `>&N`, make `fd` a copy of this fd (no file)
+  bool input = false;  // `<`: open `path` for reading (the other fields are then unused)
 };
 
 struct Command

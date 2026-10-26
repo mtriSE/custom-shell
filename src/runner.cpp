@@ -40,7 +40,8 @@ namespace
     {
       auto fd_redirect = redirect.dup_from >= 0
                              ? std::make_unique<FdRedirect>(redirect.fd, redirect.dup_from)
-                             : std::make_unique<FdRedirect>(redirect.fd, redirect.path, redirect.append);
+                             : std::make_unique<FdRedirect>(redirect.fd, redirect.path,
+                                              redirect.append ? OpenMode::Append : OpenMode::Truncate);
       if (!fd_redirect->ok())
       {
         error = fd_redirect->error();
