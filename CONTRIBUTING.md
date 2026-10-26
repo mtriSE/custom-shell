@@ -304,7 +304,26 @@ a syntax error; it is now an operator. `parse_line` returns a `Node` (`PipelineN
   ending with status 2 and the line goes on; the commands before it have already run (documented
   limitation: a syntax error stops everything before anything runs).
 
-### 4.5 Expansion (`expand_word`, `expand_pipeline`)
+### 4.5 `&` and the forms that are rejected
+
+An unquoted `&` that is not part of `&&`, `>&` or `<&` ends the pipeline before it and starts it in
+the background (`[N] pid`, a job as before); the next command runs at once: `sleep 1 & echo hi`,
+`a & b &`, `a; b &`, `a&b`. Before feature 004 a `&` in the middle of a line was plain text
+(`echo a & b` printed `a & b`); quote it (`'&'`, `\&`) to keep the character.
+
+- A pipeline followed by `&` must not be joined to another by `&&` or `||`: `a && b &`, `a || b &`
+  and `a & && b` are syntax errors (near `&`, `&`, `&&`). Limitation: bash would run the whole
+  chain in the background. `a & b && c` is fine (`b && c` is a separate chain).
+- `a &; b` is an error near `;`, `a & & b` and a line that starts with `&` (or is only `&`) near
+  `&`, as in bash.
+- `&>` and `&>>` (bash's redirect of both outputs) are rejected as errors near `&`: otherwise they
+  would silently background the command and create a file from the empty command that follows.
+  `|&` is an error near `&` too (it is not a pipe here).
+- Each of these is pinned by the golden case `list_errors`; the behaviour of `&` by
+  `list_background` and `tests/pty/test_lists.py`. `list_background` depends on the clock like
+  `jobs_background` and `jobs_done`: the `sleep 1` jobs must still be running when `jobs` runs.
+
+### 4.6 Expansion (`expand_word`, `expand_pipeline`)
 
 Runs on each pipeline right before it executes (see section 3); the tokenizer never expands.
 For every command word and every redirect target:

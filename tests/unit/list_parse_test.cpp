@@ -173,3 +173,109 @@ TEST_CASE("&& and || in the wrong place are syntax errors")
   expect_error("a && ; b", ";");
   expect_error("a | || b", "||");
 }
+
+namespace
+{
+  // One item of a list: its text and whether it runs in the background.
+  struct Entry
+  {
+    std::string text;
+    bool background = false;
+    bool chain = false; // an AndOrNode, not a single pipeline
+    bool operator==(const Entry &other) const = default;
+  };
+
+  std::vector<Entry> entries_of(const std::string &line)
+  {
+    std::string error;
+    auto node = parse(line, error);
+    INFO(line);
+    REQUIRE(node.has_value());
+    const auto *list = std::get_if<ListNode>(&node->value);
+    REQUIRE(list != nullptr);
+    std::vector<Entry> entries;
+    for (const auto &item : list->items)
+    {
+      if (const auto *pipeline = std::get_if<PipelineNode>(&item))
+      {
+        entries.push_back({pipeline->text, pipeline->background, false});
+      }
+      else
+      {
+        const auto &chain = std::get<AndOrNode>(item);
+        entries.push_back({chain.pipelines[0].text + "..", false, true});
+      }
+    }
+    return entries;
+  }
+
+  using Entries = std::vector<Entry>;
+}
+
+TEST_CASE("& ends a command and starts it in the background")
+{
+  REQUIRE(entries_of("a & b") == Entries{{"a", true}, {"b", false}});
+  REQUIRE(entries_of("a&b") == Entries{{"a", true}, {"b", false}});
+  REQUIRE(entries_of("a & b &") == Entries{{"a", true}, {"b", true}});
+  REQUIRE(entries_of("a; b &") == Entries{{"a", false}, {"b", true}});
+  REQUIRE(entries_of("a & b && c") == Entries{{"a", true}, {"b..", false, true}});
+  REQUIRE(entries_of("a | b & c") == Entries{{"a | b", true}, {"c", false}});
+}
+
+TEST_CASE("a lone & at the end of the line still backgrounds one pipeline")
+{
+  for (const char *line : {"sleep 1 &", "sleep 1 & ", "sleep 1&"})
+  {
+    std::string error;
+    auto node = parse(line, error);
+    INFO(line);
+    REQUIRE(node.has_value());
+    const auto *pipeline = std::get_if<PipelineNode>(&node->value);
+    REQUIRE(pipeline != nullptr);
+    REQUIRE(pipeline->background);
+    REQUIRE(pipeline->text == "sleep 1");
+  }
+
+  std::string error;
+  auto piped = parse("a | b &", error);
+  REQUIRE(piped.has_value());
+  const auto *pipeline = std::get_if<PipelineNode>(&piped->value);
+  REQUIRE(pipeline != nullptr);
+  REQUIRE(pipeline->background);
+  REQUIRE(pipeline->stages.size() == 2);
+  REQUIRE(pipeline->text == "a | b");
+}
+
+TEST_CASE("a quoted or escaped & is a word")
+{
+  for (const char *line : {"echo '&'", "echo \"&\"", "echo \\&", "echo a'&'b"})
+  {
+    std::string error;
+    auto node = parse(line, error);
+    INFO(line);
+    REQUIRE(node.has_value());
+    const auto *pipeline = std::get_if<PipelineNode>(&node->value);
+    REQUIRE(pipeline != nullptr);
+    REQUIRE_FALSE(pipeline->background);
+  }
+}
+
+TEST_CASE("& after a chain, and & in the wrong place, are syntax errors")
+{
+  expect_error("a && b &", "&");
+  expect_error("a || b &", "&");
+  expect_error("a & && b", "&&");
+  expect_error("a &; b", ";");
+  expect_error("a & & b", "&");
+  expect_error("& a", "&");
+  expect_error("&", "&");
+  expect_error("a &&& b", "&");
+  expect_error("a; &", "&");
+  expect_error("a |& b", "&");
+}
+
+TEST_CASE("&> and &>> are not supported")
+{
+  expect_error("echo hi &> f", "&");
+  expect_error("echo hi &>> f", "&");
+}

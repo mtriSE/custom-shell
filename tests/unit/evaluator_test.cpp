@@ -224,3 +224,13 @@ TEST_CASE("a chain inside a list: ; starts over")
   REQUIRE(other.asked == Texts{"a", "b"});
   REQUIRE(result.status == 0);
 }
+
+TEST_CASE("a background item leaves status 0 and does not stop the list")
+{
+  Script script{{{.status = 0, .job_number = 1, .job_pid = 4242}, status(0)}};
+  auto result = evaluate(list({"sleep 1", "echo hi"}), script.step());
+  REQUIRE(script.asked == Texts{"sleep 1", "echo hi"});
+  REQUIRE(result.status == 0);
+  REQUIRE(result.job_number == 0);
+  REQUIRE(result.job_pid == 0);
+}

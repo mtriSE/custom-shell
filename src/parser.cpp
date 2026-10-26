@@ -20,10 +20,11 @@ namespace
   {
     Word,
     Redirect,   // `>`, `>>`, `>&`, `<`; `fd`/`append`/`dup`/`input` describe it
-    Unsupported, // `<<`, `<<<`, `<&`, `<>` (always an error, named `<`)
+    Unsupported, // `<<`, `<<<`, `<&`, `<>`, `&>`, `&>>` (always an error, named by `unexpected`)
     Pipe,       // `|`
     And,        // `&&`
     Or,         // `||`
+    Amp,        // `&` that ends a command and starts it in the background
     Semi,       // `;`
     DoubleSemi, // `;;` (always an error)
   };
@@ -39,6 +40,8 @@ namespace
     bool dup = false;
     // `<`: the file is read, `fd` defaults to 0.
     bool input = false;
+    // For `Unsupported`: the operator the syntax error names (`<` or `&`).
+    const char *unexpected = "";
     // Where the token is in the line: [begin, end). Used for the text of a pipeline.
     size_t begin = 0;
     size_t end = 0;
@@ -147,15 +150,23 @@ namespace
         break;
 
       case '&':
+        end_token();
         if (next_is('&'))
         {
-          end_token();
           tokens_.push_back({.kind = Kind::And, .begin = pos_, .end = pos_ + 2});
           ++pos_; // consume the second `&`
         }
+        else if (next_is('>'))
+        {
+          // `&>` and `&>>` redirect both outputs in bash; here they would silently background
+          // the command and create a file, so they are an error.
+          tokens_.push_back(
+              {.kind = Kind::Unsupported, .unexpected = "&", .begin = pos_, .end = pos_ + 2});
+          ++pos_;
+        }
         else
         {
-          append(c, Quoting::Unquoted); // a lone `&` is still text, see parse_line
+          tokens_.push_back({.kind = Kind::Amp, .begin = pos_, .end = pos_ + 1});
         }
         break;
 
@@ -306,7 +317,8 @@ namespace
       if (next_is('<') || next_is('&') || next_is('>'))
       {
         ++pos_; // consume the second character
-        tokens_.push_back({.kind = Kind::Unsupported, .begin = begin, .end = pos_ + 1});
+        tokens_.push_back(
+            {.kind = Kind::Unsupported, .unexpected = "<", .begin = begin, .end = pos_ + 1});
         return;
       }
       tokens_.push_back({.kind = Kind::Redirect,
@@ -413,7 +425,7 @@ namespace
   public:
     explicit Grouper(const std::string &input) : input_(input) {}
 
-    std::optional<Node> run(std::vector<Token> tokens, bool background, std::string &error)
+    std::optional<Node> run(std::vector<Token> tokens, std::string &error)
     {
       for (auto &token : tokens)
       {
@@ -455,6 +467,22 @@ namespace
           break;
         }
 
+        case Kind::Amp:
+          // `&` ends the command before it and starts it in the background. Only a pipeline that
+          // is alone in its chain can be (`a && b &` is an error: bash would run the whole chain).
+          if (stage_.empty() || !chain_.pipelines.empty())
+          {
+            error = syntax_error("&");
+            return std::nullopt;
+          }
+          if (!close_pipeline("&", error))
+          {
+            return std::nullopt;
+          }
+          chain_.pipelines[0].background = true;
+          end_item();
+          break;
+
         case Kind::Semi:
           if (stage_.empty())
           {
@@ -473,7 +501,7 @@ namespace
           return std::nullopt;
 
         case Kind::Unsupported:
-          error = syntax_error("<");
+          error = syntax_error(token.unexpected);
           return std::nullopt;
         }
       }
@@ -493,20 +521,6 @@ namespace
           return std::nullopt;
         }
         end_item();
-      }
-
-      // A trailing lone `&` runs the last pipeline of the line in the background; a pipeline that
-      // is part of a chain cannot be (`a && b &` is an error: bash would run the whole chain).
-      if (background)
-      {
-        auto *last = items_.empty() || !command_pending ? nullptr
-                                                        : std::get_if<PipelineNode>(&items_.back());
-        if (last == nullptr)
-        {
-          error = syntax_error("&");
-          return std::nullopt;
-        }
-        last->background = true;
       }
 
       if (items_.empty())
@@ -593,13 +607,5 @@ std::optional<Node> parse_line(const std::string &input, std::string &error)
   // Split the line into words and operators (quotes/escapes already resolved).
   auto tokens = Tokenizer{}.run(input);
 
-  // A trailing unquoted `&` word runs the last pipeline of the line in the background.
-  bool background = false;
-  if (!tokens.empty() && tokens.back().kind == Kind::Word && is_literal(tokens.back().word, "&"))
-  {
-    tokens.pop_back();
-    background = true;
-  }
-
-  return Grouper(input).run(std::move(tokens), background, error);
+  return Grouper(input).run(std::move(tokens), error);
 }

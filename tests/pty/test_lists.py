@@ -118,5 +118,25 @@ class InputRedirectTests(ShellTestCase):
         self.assertEqual(self.shell.status(), 130)
 
 
+class BackgroundTests(ShellTestCase):
+    def test_a_background_command_does_not_hold_back_the_next_one(self):
+        self.shell.send("sleep 5 & echo hi\n")
+        out = self.shell.expect(PROMPT, 1.0)
+        self.assertRegex(out, r"\[1\] \d+\nhi\n\$ $")
+        self.assertEqual(self.shell.run("jobs"), job_line(1, "Running", "sleep 5 &") + "\n")
+
+    def test_a_background_command_after_a_semicolon_is_one_job(self):
+        self.shell.send("echo a; sleep 5 &\n")
+        out = self.shell.expect(PROMPT, 1.0)
+        self.assertRegex(out, r"a\n\[1\] \d+\n\$ $")
+        self.assertTrue(process_running("sleep 5"))
+
+    def test_a_background_chain_is_a_syntax_error_and_starts_nothing(self):
+        out = self.shell.run("echo a && sleep 5 &")
+        self.assertEqual(out, "syntax error near unexpected token `&'\n")
+        self.assertFalse(process_running("sleep 5"))
+        self.assertEqual(self.shell.status(), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -183,7 +183,7 @@ TEST_CASE("a trailing unquoted & makes the pipeline a background job")
   REQUIRE(background.pipeline->background);
   REQUIRE(background.pipeline->stages[0].args == Args{"sleep", "1"});
 
-  for (const char *line : {"echo \"&\"", "echo \\&", "echo a&", "echo '&'"})
+  for (const char *line : {"echo \"&\"", "echo \\&", "echo '&'", "echo a'&'"})
   {
     auto parsed = parse(line);
     INFO(line);
@@ -191,6 +191,12 @@ TEST_CASE("a trailing unquoted & makes the pipeline a background job")
     REQUIRE_FALSE(parsed.pipeline->background);
     REQUIRE(parsed.pipeline->stages[0].args.size() == 2);
   }
+
+  // Since feature 004 an unquoted & glued to a word is the operator too (it used to be text).
+  auto glued = parse("echo a&");
+  REQUIRE(glued.pipeline.has_value());
+  REQUIRE(glued.pipeline->background);
+  REQUIRE(glued.pipeline->stages[0].args == Args{"echo", "a"});
 }
 
 TEST_CASE("pipelines")
