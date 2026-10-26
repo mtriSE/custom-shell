@@ -323,6 +323,13 @@ the background (`[N] pid`, a job as before); the next command runs at once: `sle
   `list_background` and `tests/pty/test_lists.py`. `list_background` depends on the clock like
   `jobs_background` and `jobs_done`: the `sleep 1` jobs must still be running when `jobs` runs.
 
+Limitations of command lists and input redirects, all listed here and each pinned by a test:
+here-documents and here-strings (`<<`, `<<<`), `<&`, `<>`, `&>`, `&>>` and `|&` are syntax errors;
+`a && b &` is an error (bash backgrounds the whole chain); a line ending in `&&`, `||` or `|` is an
+error near `newline` (no continuation prompt, where bash waits for more input); a bad `>&` target
+is found when the command is about to run, so in `echo a; echo >&x` the first command has run.
+Pins: `list_errors`, `redirect_input_unsupported`, `list_expansion_error`, `tests/pty/test_lists.py`.
+
 ### 4.6 Expansion (`expand_word`, `expand_pipeline`)
 
 Runs on each pipeline right before it executes (see section 3); the tokenizer never expands.

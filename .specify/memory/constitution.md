@@ -20,8 +20,12 @@ behaviour covers output text, error messages, ordering and exit statuses.
   builtins, external programs and unknown commands.
 - A deviation from bash is allowed only as an explicit, documented limitation (today: `>>&`
   unsupported, `~user`, `~+`, `~-` and tilde after `=` or `:` not expanded, no variables or
-  globbing, every ended job is plain `Done`, no `%string` job specs). Each limitation MUST be listed in CONTRIBUTING.md and be covered by a test that pins
-  the current behaviour.
+  globbing, every ended job is plain `Done`, no `%string` job specs, no here-documents or
+  here-strings (`<<`, `<<<`), no `<&`, `<>`, `&>`, `&>>` or `|&`, `&` after a `&&`/`||` chain is
+  an error, no continuation prompt for a trailing `&&`/`||`/`|`, and a `>&` target found wrong at
+  expansion time in the middle of a list counts as status 2 while the earlier commands have
+  already run). Each limitation MUST be listed in CONTRIBUTING.md and be covered by a test that
+  pins the current behaviour.
 
 Rationale: users bring bash habits. A shell that is "almost" right is worse than one that is
 visibly limited, because scripts silently do the wrong thing.
@@ -33,7 +37,8 @@ Code MUST stay small, single-purpose and readable. The module split is part of t
 - Dependencies point one way. `shell` orchestrates; `parser`, `redirect`, `builtins`, `executor`,
   `job_table`, `completer_registry` and `path_utils` MUST NOT depend on `shell` or on each other
   except through their `.hpp` interface (today: `runner` → `builtins`/`executor`/`redirect`/
-  `path_utils`/`expansion`; `expansion` → the parsed types of `parser.hpp`; `completion` → `builtins`/`completer_registry`/`executor`/`path_utils`).
+  `path_utils`/`expansion`/`evaluator`; `evaluator` → the tree types of `parser.hpp`; `expansion`
+  → the parsed types of `parser.hpp`; `redirect` → `signals`; `completion` → `builtins`/`completer_registry`/`executor`/`path_utils`).
 - Syntax problems are reported through `std::optional` + an `error` string, never exceptions.
   Runtime errors are reported on stderr and via a status code. Library calls that can throw
   (`std::filesystem`) MUST use the `std::error_code` overloads.
@@ -76,7 +81,9 @@ change:
   `print_jobs()` (`WNOHANG`). No code path may leave a permanent zombie or a leaked fd.
 - Builtins that change shell state (`cd`, `exit`, future `export`/`set`) run in the shell process,
   except inside a multi-stage pipeline where they run in a child.
-- Interrupted syscalls (`EINTR`) on `dup2`, `read` and `waitpid` MUST be retried.
+- Interrupted syscalls (`EINTR`) on `dup2`, `read` and `waitpid` MUST be retried. So is the `open`
+  of a redirect target, except that Ctrl-C ends the wait (a FIFO nobody writes to must not hang
+  the shell; `open_interruptible`).
 
 Interactive terminal rules. The shell runs on a terminal, which today may be a pty opened by a GUI
 terminal emulator. When stdin is a tty:
@@ -324,4 +331,4 @@ first; new code MUST NOT add to them. The constitution is re-read at the start o
 checked for drift after every five merged features or whenever a principle is cited as the reason
 for a rejected change.
 
-**Version**: 1.1.2 | **Ratified**: 2026-10-18 | **Last Amended**: 2026-10-26
+**Version**: 1.1.3 | **Ratified**: 2026-10-18 | **Last Amended**: 2026-10-26

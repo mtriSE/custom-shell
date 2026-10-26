@@ -135,3 +135,20 @@ tests/
 | `evaluator` module with a `std::function` hook (`StepFn`) | The order rules of `;`/`&&`/`||`, short-circuit, `$?` and interruption are pure control flow; with a scripted step they get exhaustive unit tests, with the real step they run processes (two adapters, a real seam) | Putting the logic in `run_tree` makes it testable only through goldens and pty tests, which cannot enumerate the cases cheaply (research R4) |
 | `notify` callback on `run_tree` | Notices and the `exit` refusal must happen between commands, but `Shell` owns `is_interactive`, `format_job_line` and the refusal flag | Printing after `run_tree` returns gives the wrong order for `sleep 1 & echo hi`; letting `runner` print would make it depend on `Shell` state (research R5) |
 | Interruptible `open` for `<` (a SIGINT `sigaction` flag toggled around one call) | Without it `cat < fifo` hangs the shell under `SA_RESTART` (Principle III) | Documenting the hang violates the principle; `O_NONBLOCK` changes what a FIFO read means (research R7) |
+
+## Measured cost and final check (Phase 7)
+
+- Parse, expand and dispatch of 3000 lines of 10 000 characters (`cd /` plus words, quotes and `$?`, best of
+  5, project default flags): 8.16 s on `master` before this feature, 8.32 s now (+2%); lines of half the
+  length take 4.51 s, so the cost is linear in the length. No syscall is added per command.
+- A line of 50, 100 and 200 commands joined by `&&` (`true && true && ...`) runs in 0.075 s, 0.141 s and
+  0.287 s: linear in the number of commands (SC-004).
+- Compared with bash 5.2 (31 example lines, stdout and `$?`, plus `cat < big.bin` of 1 MiB through a
+  pipe and a copy): identical, except that this shell prints `[1] PID` for `sleep 0.1 &` even when
+  not interactive, as it did before this feature (SC-001, SC-003, SC-006).
+- `tests/run.sh` was run three times in a row and once with four `yes` processes running: all green
+  (43 golden cases, 56 Catch2 cases, 95 pty tests).
+- Constitution Check re-read against the code as built: no deviation beyond the documented
+  limitations. Constitution amended to v1.1.3 (Principles I, II and III).
+- Not done by the agent: the interactive steps of the quickstart on a real terminal emulator
+  (Ctrl-C, Ctrl-Z, FIFO, `sleep 5 & echo hi`) were exercised through the pty tests only.
