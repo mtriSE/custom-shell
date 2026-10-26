@@ -1,0 +1,6 @@
+echo ~
+echo ~/x
+echo a ~
+echo a~ ~x
+echo ~ ~
+exit

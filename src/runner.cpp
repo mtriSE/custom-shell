@@ -15,6 +15,7 @@
 #include <string>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <variant>
 #include <vector>
 
 namespace
@@ -244,4 +245,22 @@ Outcome run_pipeline(const Pipeline &pipeline, const std::string &line)
                        pipeline.background ? Mode::Background : Mode::Foreground, line);
   }
   return run_stages(pipeline.stages, line, pipeline.background);
+}
+
+Outcome run_tree(const Node &node, const std::string &line, const ExpansionContext &context)
+{
+  return std::visit(
+      [&](const PipelineNode &parsed) -> Outcome
+      {
+        // Expanded here, right before it runs, so `$?` is the status of whatever ran last.
+        std::string error;
+        auto pipeline = expand_pipeline(parsed, context, error);
+        if (!pipeline)
+        {
+          std::cerr << error << std::endl;
+          return {.status = 2};
+        }
+        return run_pipeline(*pipeline, line);
+      },
+      node.value);
 }

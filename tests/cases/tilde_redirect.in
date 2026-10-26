@@ -1,0 +1,3 @@
+echo hi > ~/no_such_dir/f
+echo $?
+exit

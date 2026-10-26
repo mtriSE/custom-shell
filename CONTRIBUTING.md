@@ -8,7 +8,8 @@ breaking the existing design.
 
 ```sh
 ./run.sh                   # cmake configure + build, then run build/shell
-tests/run.sh               # golden cases, then the terminal tests (needs build/shell and python3)
+tests/run.sh               # golden cases, unit tests, then the terminal tests (needs build/shell, Catch2 and python3)
+build/unit_tests           # the Catch2 unit tests only (after `cmake --build build --target unit_tests`)
 tests/pty/run.sh           # terminal (pty) tests only
 tests/run.sh --update      # overwrite the .out files with the current output
 ```
@@ -37,6 +38,18 @@ can cover `&` and `jobs` (`.out` files contain `[1] PID`). Only that line shape 
 whole line, or right after the piped `$ ` prompt. The one clock dependency in the suite is
 `jobs_done`: a job that exits at once is given 0.5 s to be reaped before the next prompt reports it.
 
+### Unit tests
+
+[tests/unit/](tests/unit/) holds Catch2 v3 cases that call the shell's code directly, without
+starting the shell: the parser and (from the expansion step on) word expansion. The CMake target
+`unit_tests` links the `shell_core` library (every source except `main.cpp`) and is built by
+`tests/run.sh`, or by hand with `cmake --build build --target unit_tests`. Run one case with
+`build/unit_tests "name"`, list them with `build/unit_tests --list-tests`. Catch2 is needed only for
+these tests: install the `catch2` package, or configure once with `-DSHELL_FETCH_CATCH2=ON` (downloads
+a pinned release; needs network and git). Without it configuring and building the shell still work,
+and `tests/run.sh` fails with a message instead of skipping the unit tests. Use them for pure
+logic with a function-level interface; use golden cases for what a user sees.
+
 ### Terminal tests
 
 [tests/pty/](tests/pty/) runs `build/shell` on a pseudo-terminal (`harness.py`), sends keystrokes
@@ -51,9 +64,12 @@ cannot, because stdin is a pipe there.
 |---|---|
 | [src/main.cpp](src/main.cpp) | Turns on `unitbuf` for `cout`/`cerr`, then runs `Shell::run()`. |
 | [src/shell.cpp](src/shell.cpp) | REPL loop, applies redirects, dispatches to builtin or external program. Owns `last_status_` (the value of `$?`). |
-| [src/parser.cpp](src/parser.cpp), [parser.hpp](src/parser.hpp) | Turns a line of text into a `Command` (`args` + `redirects`). |
+| [src/parser.cpp](src/parser.cpp), [parser.hpp](src/parser.hpp) | Turns a line of text into a `PipelineNode`: stages of `ParsedCommand` (`words` + `redirects`), words still unexpanded. |
+| [src/word.hpp](src/word.hpp) | `Word`: pieces of text, each with how it was quoted (`Unquoted`, `Double`, `Single`, `Escaped`). |
+| [src/expansion.cpp](src/expansion.cpp), [expansion.hpp](src/expansion.hpp) | The expansion step: `expand_word` (today `$?`) and `expand_pipeline`, which turns a `PipelineNode` into the `Pipeline` of final text that the runner executes. Takes `last_status` and `HOME` as values (`ExpansionContext`). |
+| [src/command.hpp](src/command.hpp) | The executable `Pipeline`/`Command`/`Redirect` (final text) and the fd rules (`MAX_FD`, `valid_fd`). |
 | [src/redirect.cpp](src/redirect.cpp), [redirect.hpp](src/redirect.hpp) | `FdRedirect`: redirects one fd and restores it automatically (RAII). |
-| [src/runner.cpp](src/runner.cpp), [runner.hpp](src/runner.hpp) | `run_pipeline`: runs a parsed line. A lone builtin runs in the shell; any other command or pipeline is started as one job (one process group) and waited for. |
+| [src/runner.cpp](src/runner.cpp), [runner.hpp](src/runner.hpp) | `run_tree`: runs a parsed line (expands each pipeline leaf just before it runs, then `run_pipeline`). A lone builtin runs in the shell; any other command or pipeline is started as one job (one process group) and waited for. |
 | [src/builtins.cpp](src/builtins.cpp), [builtins.hpp](src/builtins.hpp) | Built-in commands: `exit`, `echo`, `type`, `pwd`, `cd`, `complete`, `jobs`, `fg`, `bg`. |
 | [src/executor.cpp](src/executor.cpp) | `start_process`: `fork` + `setpgid` + `execv` for external programs (never waits); `capture_lines` for completion scripts. |
 | [src/job_table.cpp](src/job_table.cpp), [job_table.hpp](src/job_table.hpp) | The job table: jobs with their processes and state (`Running`/`Stopped`/`Done`), numbers, the `+`/`-` ranking, the `jobs` format. Pure data and rules, no terminal calls. |
@@ -159,23 +175,32 @@ group, applies no completion and leaves the line as typed. There is still no tim
 ## 3. Life of one input line
 
 ```
-getline ──► parse_command ──► run_command ──► last_status_
-             (parser.cpp)      (shell.cpp)
+getline ──► parse_line ──► run_tree ──► expand_pipeline ──► run_pipeline ──► last_status_
+             (parser.cpp)    (runner.cpp)   (expansion.cpp)      (runner.cpp)
 ```
 
 1. **Read.** `Shell::run()` prints `$ ` and reads a line with `std::getline`.
    EOF ends the shell.
-2. **Parse.** `parse_command(input, last_status_, error)` returns a `Command`,
-   or `nullopt` with a syntax-error message. On error the shell prints it to
-   stderr, sets `last_status_ = 2` and reads the next line.
-3. **Run.** `run_command` does, in order:
+2. **Parse.** `parse_line(input, error)` returns a command tree, a `Node`
+   (today always one `PipelineNode` leaf: stages of unexpanded words), or
+   `nullopt` with a syntax-error message.
+3. **Expand.** `run_tree` visits the tree; for a pipeline leaf it calls
+   `expand_pipeline(node, context, error)`, which turns every word and
+   redirect target into final text (`$?` today) and checks the target of
+   `>&`, right before the pipeline runs (so `$?` will be the status of
+   whatever ran last once lists exist). On a parse or expand error the shell prints the message to stderr,
+   sets `last_status_ = 2` and reads the next line; nothing has run. When a
+   line has two different errors the syntax error is reported first (a
+   `>&` target is only known after expansion), e.g. `echo >&x |` gives
+   ``syntax error near unexpected token `newline'``, not `x: Bad fd number`.
+4. **Run.** `run_command` does, in order:
    1. Apply all redirects (see section 5).
    2. If there are no `args` (only redirects, e.g. `> f`), stop; the file is
       still created.
    3. If `args[0]` is a builtin, call `run_builtin`.
    4. Else if it is found in `$PATH`, call `execute`.
    5. Else print `<cmd>: command not found` with status 127.
-4. **Result.** `run_command` returns `Outcome{exit, status}`; `status` is stored
+5. **Result.** `run_command` returns `Outcome{exit, status}`; `status` is stored
    in `last_status_` so the next line can read it through `$?`.
 
 Exit statuses: 1 when a redirect target cannot be opened, 2 for a syntax error,
@@ -183,7 +208,8 @@ Exit statuses: 1 when a redirect target cannot be opened, 2 for a syntax error,
 
 ## 4. Parser
 
-Parsing has two steps, both in [src/parser.cpp](src/parser.cpp).
+Parsing has two steps, both in [src/parser.cpp](src/parser.cpp); expanding the words is a
+separate step afterwards ([src/expansion.cpp](src/expansion.cpp)).
 
 ### 4.1 `Tokenizer`: a character-by-character state machine
 
@@ -193,20 +219,22 @@ the character right after a `\`.
 
 | Flag | Meaning |
 |---|---|
-| `current_` | Text of the token being built. |
-| `in_token_` | A token has started, even if it is empty (`''` is still an empty argument). |
-| `quoted_` | The token used a quote, a `\` or `$?`; such a token is never read as an fd number. |
+| `current_` | The `Word` being built: pieces of text, each with its `Quoting`. |
+| `in_token_` | A token has started, even if it is empty (`''` is still an empty argument: an empty `Single` piece). |
+
+A word is an fd number (`2>`) only if it is one unquoted piece of digits (`is_plain_number`), so
+`"2">f`, `$?>f` and `12>f` are not `2>`.
 
 Rules worth remembering:
 
 - Inside single quotes everything is literal.
 - Inside double quotes `\` only escapes `"` `\` `$` `` ` ``; before any other
   character the backslash stays (see `DOUBLE_QUOTE_ESCAPES`).
-- `$?` is replaced with `last_status` while tokenizing (`expand_status`), both
-  outside quotes and inside double quotes.
+- The tokenizer expands nothing. `$?` stays as text; `expand_word` replaces it
+  outside quotes and inside double quotes, never in single quotes or after a `\`.
 - An unquoted space or tab calls `end_token()` to finish the token.
 
-The output is a `vector<Token>`. Each `Token` is either a word (`text`) or a
+The output is a `vector<Token>`. Each `Token` is either a word (`word`) or a
 **redirect marker** (`is_redirect = true`) carrying `fd`, `append` and `dup`.
 A marker only comes from an unquoted, unescaped `>`, so `echo ">"` just prints
 a `>` character.
@@ -215,8 +243,8 @@ a `>` character.
 
 This decides three things:
 
-1. **Source fd.** If the pending token is all digits and unquoted
-   (`in_token_ && !quoted_`), it is the fd number (`2>`, `3>`) and is removed
+1. **Source fd.** If the pending word is a plain number
+   (`in_token_ && is_plain_number(current_)`), it is the fd number (`2>`, `3>`) and is removed
    from `current_`. Otherwise the pending token is closed as an ordinary
    argument and the fd defaults to 1 (`a>f` keeps `a` as an argument; `"2">f`
    and `12>f` are not `2>`).
@@ -225,24 +253,41 @@ This decides three things:
 3. **`>&`.** If the next character is `&` (and it is not `>>`), `dup = true`:
    the target word is an fd to copy, not a file name. `>>&` is not supported.
 
-### 4.3 `parse_command`: turning tokens into a `Command`
+### 4.3 `parse_stage`: turning tokens into a `ParsedCommand`
 
 It walks the tokens in order:
 
-- A plain word goes into `command.args`.
+- A plain word goes into `command.words`.
 - A redirect marker **must** be followed by a plain word, its target; otherwise
   the error is ``syntax error near unexpected token `...'`` (`>` if another
   marker follows, `newline` at end of line).
 - The source fd must be `<= MAX_FD` (9). Fds from 10 up are reserved for the
   shell's saved copies (see section 5), so `10>f` is rejected with
   `Bad file descriptor`.
-- For `dup`, the target must be digits only (`abc: Bad fd number`) and also
-  `<= 9`.
-- The result is `Redirect{fd, path, append, dup_from}`. `dup_from >= 0` means
-  "copy an fd"; otherwise `path` is used.
+- The result is `ParsedRedirect{fd, target, append, dup}`; the target is still an
+  unexpanded `Word`.
 
-Redirects are **separated from `args`**, so builtins and external programs never
+Redirects are **separated from the words**, so builtins and external programs never
 see `2>` or the target file name.
+
+### 4.4 Expansion (`expand_word`, `expand_pipeline`)
+
+Runs on each pipeline right before it executes (see section 3); the tokenizer never expands.
+For every command word and every redirect target:
+
+- `$?` becomes the last status in unquoted and double-quoted text; it stays literal in single
+  quotes and after a backslash. A `$` followed by anything else is literal.
+- A **tilde** is replaced by `$HOME` when the word is unquoted and either is exactly `~` or starts
+  with `~/` (`echo ~`, `ls ~/bin`, `echo hi > ~/f`). `HOME` unset or empty leaves the word as typed.
+  `cd` receives the final text; bare `cd` goes to `$HOME`, or tries the literal `~` if it is unset
+  (`cd: ~: No such file or directory`).
+- Limitations (each pinned by `tests/cases/tilde_literal` and `tests/unit/expansion_test.cpp`):
+  `~user`, `~+`, `~-` and a tilde after `=` or `:` (`x=~/a`, `a:~/b`) are not expanded, and neither
+  is a tilde inside quotes (`"~"`, `'~'`, `\~`) or not at the start of a word (`a~`).
+- For `>&`, the expanded target must be digits only (`abc: Bad fd number`) and `<= 9`
+  (`10: Bad file descriptor`); this is checked here, so a line with both a syntax error and a bad
+  `>&` target reports the syntax error first. The result is `Redirect{fd, path, append, dup_from}`
+  (`command.hpp`); `dup_from >= 0` means "copy an fd", otherwise `path` is used.
 
 ## 5. Redirects at execution time
 
@@ -314,9 +359,12 @@ runs.
 - Recognising special characters belongs in `Tokenizer::feed_normal`. If the
   syntax depends on the next character, use `next_is`.
 - For a new kind of token, add a field to `Token` and handle it in
-  `parse_command`.
-- The result types live in [src/parser.hpp](src/parser.hpp); if you add a field
-  to `Redirect` or `Command`, update the consumer in `shell.cpp`.
+  `parse_stage`.
+- The parsed types live in [src/parser.hpp](src/parser.hpp) and the executable ones in
+  [src/command.hpp](src/command.hpp); a field added to one usually needs the other and
+  `expand_pipeline`.
+- A new kind of expansion goes in `expand_word` ([src/expansion.cpp](src/expansion.cpp)) with a
+  row in `tests/unit/expansion_test.cpp`; the tokenizer does not change.
 - Report syntax errors through `error` + `nullopt`, not exceptions.
 
 ### Add a new kind of redirect

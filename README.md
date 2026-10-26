@@ -2,7 +2,7 @@
 
 A POSIX-style shell written in C++23.
 
-Features: quoting and backslash escapes, `$?`, redirection (`>`, `>>`, `N>`,
+Features: quoting and backslash escapes, `$?`, `~` expansion, redirection (`>`, `>>`, `N>`,
 `>&N`), pipelines (`a | b | c`), background jobs (`&`, `jobs`, `Done` reports), job
 control (Ctrl-Z stops the running command, `fg` and `bg` continue it, a warning when you
 leave with stopped jobs), the builtins
@@ -22,6 +22,8 @@ Install these **before** building. Besides the build tools, you need the GNU rea
 - A POSIX system (Linux); Windows is not supported
 - `python3` (standard library only) to run the terminal tests in `tests/pty/`; it is not needed to
   build or run the shell. `tests/run.sh` fails with a clear message if it is missing
+- Catch2 v3 to build and run the unit tests in `tests/unit/` (`build/unit_tests`); it is not needed
+  to build or run the shell. `tests/run.sh` fails with a clear message if it is not configured
 
 | Distribution | Install command |
 |---|---|
@@ -33,6 +35,11 @@ Install these **before** building. Besides the build tools, you need the GNU rea
 | Void | `sudo xbps-install -S base-devel cmake readline-devel` |
 | Gentoo | `sudo emerge --ask dev-build/cmake sys-libs/readline` |
 | NixOS / Nix | `nix-shell -p cmake gcc readline` |
+
+Catch2 v3 (tests only): Debian, Ubuntu `sudo apt install catch2`; Fedora, RHEL `sudo dnf install
+catch-devel`; Arch `sudo pacman -S catch2`; openSUSE `sudo zypper install Catch2-devel`; Alpine
+`sudo apk add catch2`. Without a package, configure with `cmake -B build -S . -DSHELL_FETCH_CATCH2=ON`
+(downloads a pinned release; needs network and git). `-DSHELL_UNIT_TESTS=OFF` skips the unit tests.
 
 On Arch and Gentoo the headers ship with the main readline package. On older releases whose
 default compiler is too old for C++23 (for example Debian 12 or Ubuntu 22.04), install a newer
@@ -49,7 +56,7 @@ from the table above, then re-run cmake in a clean build directory (`rm -rf buil
 
 ```sh
 ./run.sh                 # configure, build, then start the shell
-tests/run.sh             # golden cases, then terminal (pty) tests; needs build/shell and python3
+tests/run.sh             # golden cases, unit tests, then terminal (pty) tests; needs build/shell, Catch2 and python3
 tests/pty/run.sh         # terminal tests only
 ```
 

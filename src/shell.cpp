@@ -1,6 +1,7 @@
 #include "shell.hpp"
 
 #include "completion.hpp"
+#include "expansion.hpp"
 #include "job_control.hpp"
 #include "job_table.hpp"
 #include "parser.hpp"
@@ -84,15 +85,15 @@ void Shell::run()
     exit_refused_ = false;
 
     std::string error;
-    auto pipeline = parse_pipeline(input, last_status_, error);
-    if (!pipeline)
+    auto tree = parse_line(input, error);
+    if (!tree)
     {
       std::cerr << error << std::endl;
       last_status_ = 2;
       continue;
     }
 
-    Outcome outcome = run_pipeline(*pipeline, input);
+    Outcome outcome = run_tree(*tree, input, context_from_environment(last_status_));
     last_status_ = outcome.status;
     // The terminal shows nothing of its own after a command killed by Ctrl-C or Ctrl-\, so
     // the prompt would start mid-line. Only on a terminal: piped output stays as before.

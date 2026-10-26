@@ -1,0 +1,4 @@
+echo "~" '~' \~
+echo ~"/x"
+echo '~'/x
+exit

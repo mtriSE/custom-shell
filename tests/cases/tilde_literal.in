@@ -1,0 +1,2 @@
+echo ~user ~+ ~- x=~/a a:~/b a~ ~~
+exit

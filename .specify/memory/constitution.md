@@ -19,8 +19,8 @@ behaviour covers output text, error messages, ordering and exit statuses.
 - Redirects apply left to right (`2>&1 > f` differs from `> f 2>&1`) and apply uniformly to
   builtins, external programs and unknown commands.
 - A deviation from bash is allowed only as an explicit, documented limitation (today: `>>&`
-  unsupported, `~` expands only in `cd`, no variables or globbing, every ended job is plain
-  `Done`, no `%string` job specs). Each limitation MUST be listed in CONTRIBUTING.md and be covered by a test that pins
+  unsupported, `~user`, `~+`, `~-` and tilde after `=` or `:` not expanded, no variables or
+  globbing, every ended job is plain `Done`, no `%string` job specs). Each limitation MUST be listed in CONTRIBUTING.md and be covered by a test that pins
   the current behaviour.
 
 Rationale: users bring bash habits. A shell that is "almost" right is worse than one that is
@@ -33,7 +33,7 @@ Code MUST stay small, single-purpose and readable. The module split is part of t
 - Dependencies point one way. `shell` orchestrates; `parser`, `redirect`, `builtins`, `executor`,
   `job_table`, `completer_registry` and `path_utils` MUST NOT depend on `shell` or on each other
   except through their `.hpp` interface (today: `runner` → `builtins`/`executor`/`redirect`/
-  `path_utils`; `completion` → `builtins`/`completer_registry`/`executor`/`path_utils`).
+  `path_utils`/`expansion`; `expansion` → the parsed types of `parser.hpp`; `completion` → `builtins`/`completer_registry`/`executor`/`path_utils`).
 - Syntax problems are reported through `std::optional` + an `error` string, never exceptions.
   Runtime errors are reported on stderr and via a status code. Library calls that can throw
   (`std::filesystem`) MUST use the `std::error_code` overloads.
@@ -124,6 +124,8 @@ definition of correct behaviour.
   screen text and exit status are compared) before the first feature that needs it is merged;
   from then on such behaviour MUST be covered by a pty case. Until the harness exists, a pty check
   by hand is required and its steps are recorded in the commit or PR description.
+- Pure logic with a function-level interface (expansion, parsing) has Catch2 cases in `tests/unit/`;
+  `tests/run.sh` builds and runs them and fails when they are missing or red.
 - `tests/run.sh` MUST pass in full before every commit to `master`. A failing or flaky test is
   fixed or removed with justification, never skipped silently.
 
@@ -242,7 +244,8 @@ groups, terminal modes) is mandatory work, which Principle III now states.
 ## Engineering Constraints
 
 - **Language/toolchain**: C++23, CMake ≥ 3.13, single executable `shell`, linked only against
-  `readline` and the C++/POSIX libraries. A new third-party dependency requires a
+  `readline` and the C++/POSIX libraries (the test-only `unit_tests` executable and the Catch2
+  dependency are recorded exceptions, feature 003). A new third-party dependency requires a
   constitution-level justification (amendment or recorded exception in the plan's Complexity
   Tracking).
 - **Platform**: Linux/POSIX only (`fork`, `execv`, `pipe`, `dup2`, `waitpid`, termios, process
@@ -321,4 +324,4 @@ first; new code MUST NOT add to them. The constitution is re-read at the start o
 checked for drift after every five merged features or whenever a principle is cited as the reason
 for a rejected change.
 
-**Version**: 1.1.1 | **Ratified**: 2026-10-18 | **Last Amended**: 2026-10-21
+**Version**: 1.1.2 | **Ratified**: 2026-10-18 | **Last Amended**: 2026-10-26

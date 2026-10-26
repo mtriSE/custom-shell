@@ -1,0 +1,9 @@
+echo single
+echo a | cat | cat
+
+echo $?
+cd /nonexistent
+echo $?
+echo a | | b
+echo $?
+exit
