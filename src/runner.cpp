@@ -1,6 +1,7 @@
 #include "runner.hpp"
 
 #include "builtins.hpp"
+#include "evaluator.hpp"
 #include "executor.hpp"
 #include "job_control.hpp"
 #include "job_table.hpp"
@@ -34,15 +35,20 @@ namespace
       }
     }
 
-    // Returns false (with the reason in `error`) if the target can't be opened.
-    bool apply(const Redirect &redirect, std::string &error)
+    // Returns false if the target can't be opened: the reason is in `error`, or `interrupted` is
+    // set when Ctrl-C ended the wait for it (no message then).
+    bool apply(const Redirect &redirect, std::string &error, bool &interrupted)
     {
+      const OpenMode mode = redirect.input    ? OpenMode::Read
+                            : redirect.append ? OpenMode::Append
+                                              : OpenMode::Truncate;
       auto fd_redirect = redirect.dup_from >= 0
                              ? std::make_unique<FdRedirect>(redirect.fd, redirect.dup_from)
-                             : std::make_unique<FdRedirect>(redirect.fd, redirect.path, redirect.append);
+                             : std::make_unique<FdRedirect>(redirect.fd, redirect.path, mode);
       if (!fd_redirect->ok())
       {
         error = fd_redirect->error();
+        interrupted = fd_redirect->interrupted();
         return false;
       }
 
@@ -91,8 +97,14 @@ namespace
     for (const auto &redirect : command.redirects)
     {
       std::string error;
-      if (!redirects.apply(redirect, error))
+      bool interrupted = false;
+      if (!redirects.apply(redirect, error, interrupted))
       {
+        if (interrupted)
+        {
+          // Ctrl-C while waiting to open a file: like a command killed by it.
+          return {.status = 130, .interrupted = true};
+        }
         std::cerr << error << std::endl;
         return {.status = 1};
       }
@@ -247,20 +259,27 @@ Outcome run_pipeline(const Pipeline &pipeline, const std::string &line)
   return run_stages(pipeline.stages, line, pipeline.background);
 }
 
-Outcome run_tree(const Node &node, const std::string &line, const ExpansionContext &context)
+Outcome run_tree(const Node &node, ExpansionContext context, const Notify &notify)
 {
-  return std::visit(
-      [&](const PipelineNode &parsed) -> Outcome
-      {
-        // Expanded here, right before it runs, so `$?` is the status of whatever ran last.
-        std::string error;
-        auto pipeline = expand_pipeline(parsed, context, error);
-        if (!pipeline)
-        {
-          std::cerr << error << std::endl;
-          return {.status = 2};
-        }
-        return run_pipeline(*pipeline, line);
-      },
-      node.value);
+  // Runs one pipeline of the tree; `context` keeps the status of the last command that ran, so
+  // `$?` is read when the pipeline is about to run, not when the line was parsed.
+  StepFn step = [&](const PipelineNode &parsed)
+  {
+    Outcome outcome;
+    std::string error;
+    auto pipeline = expand_pipeline(parsed, context, error);
+    if (!pipeline)
+    {
+      std::cerr << error << std::endl;
+      outcome.status = 2;
+    }
+    else
+    {
+      outcome = run_pipeline(*pipeline, parsed.text);
+    }
+    notify(outcome);
+    context.last_status = outcome.status;
+    return outcome;
+  };
+  return evaluate(node, step);
 }

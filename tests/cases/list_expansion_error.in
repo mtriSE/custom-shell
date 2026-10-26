@@ -1,0 +1,3 @@
+echo a; echo >&x; echo $?
+echo b; echo >&10; echo $?
+exit

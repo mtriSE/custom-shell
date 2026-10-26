@@ -116,13 +116,13 @@ RAII object, `TerminalHandoff`, so no path leaves the shell without the terminal
 ignores SIGTTOU, which is what lets it call `tcsetpgrp`/`tcsetattr` while it is not in front. Only
 the group in front receives Ctrl-C, Ctrl-\ and Ctrl-Z from the tty, so `$?` is 130 or 131 for the
 first two as before; a program that handles the signal and exits by itself keeps its own status.
-`Outcome::interrupted` tells `Shell::run` that something ended by SIGINT/SIGQUIT; it then prints
+`Outcome::interrupted` tells the `notify` callback of `Shell::run` that something ended by SIGINT/SIGQUIT; it then prints
 one `\n` (only on a tty, after the redirects are undone), because the prompt would otherwise start
 mid-line. The `^C` itself is echoed by the terminal, not by the shell. Limitation: bash also prints
 `Quit (core dumped)` after Ctrl-\; this shell does not.
 
 Ctrl-Z stops every process of the job. The job stays in the table as `Stopped`, its terminal modes
-are saved in `Job::modes`, `$?` is 148 (128 + SIGTSTP) and `Shell::run` prints
+are saved in `Job::modes`, `$?` is 148 (128 + SIGTSTP) and the `notify` callback prints
 `\n[N]+  Stopped                 <command>` once the command's redirects are undone (the terminal
 echoed `^Z` without a newline). A job that ended leaves the table without a report; its status
 becomes `$?`. `fg` restores the job's own modes, sends SIGCONT to its group and waits again (a job
@@ -200,7 +200,11 @@ getline ──► parse_line ──► run_tree ──► expand_pipeline ──
    3. If `args[0]` is a builtin, call `run_builtin`.
    4. Else if it is found in `$PATH`, call `execute`.
    5. Else print `<cmd>: command not found` with status 127.
-5. **Result.** `run_command` returns `Outcome{exit, status}`; `status` is stored
+5. **Notify.** After each pipeline has run and its redirects are undone, `run_tree` calls the
+   `notify` callback of `Shell::run`: the newline after Ctrl-C, the `[N]+  Stopped` line, `[N] pid`
+   of a background job, and the refusal of `exit` while a job is stopped (the `exit` then counts as
+   a command that failed with status 1).
+6. **Result.** `run_command` returns `Outcome{exit, status}`; `status` is stored
    in `last_status_` so the next line can read it through `$?`.
 
 Exit statuses: 1 when a redirect target cannot be opened, 2 for a syntax error,
@@ -270,7 +274,63 @@ It walks the tokens in order:
 Redirects are **separated from the words**, so builtins and external programs never
 see `2>` or the target file name.
 
-### 4.4 Expansion (`expand_word`, `expand_pipeline`)
+### 4.4 Command lists (`;`, `&&`, `||`)
+
+A line is one pipeline, a chain of pipelines joined by an unquoted `&&` or `||`, or a list of them
+separated by `;` (with or without spaces: `a;b`, `a&&b`). `||` used to be read as two pipes and gave
+a syntax error; it is now an operator. `parse_line` returns a `Node` (`PipelineNode`, `AndOrNode` or
+`ListNode`) and the `evaluator` runs it:
+
+- `|` binds tighter than `&&` and `||`, which have the same priority and group from the left, and
+  `;` is the lowest: `false && echo a || echo b` prints `b`, `true || echo a && echo b` prints `b`.
+  `&&` runs the right side only after status 0, `||` only after a non-zero status; a skipped
+  command leaves `$?` as it was (`false && true; echo $?` prints `1`).
+- A line ending in `&&` or `||` is a syntax error near `newline` (there is no continuation prompt,
+  where bash waits for more input); `&&`/`||` at the start or after another operator are errors
+  near that operator.
+
+- Every item runs, in order, whatever the status of the previous one; the status of the line is
+  the last one's. `$?` is read when each pipeline is about to run (`false; echo $?` prints `1`).
+- A trailing `;` is allowed (`echo a;`). An empty command is a syntax error near the operator that
+  follows it: `; a` and `a ; ; b` are errors near `;`, `a ;; b` and `a;;` near `;;`, as in bash.
+
+  Nothing on the line runs when the line has a syntax error.
+- `exit` ends the line and the shell. If there are stopped jobs the first `exit` is refused
+  (`There are stopped jobs.`, status 1, as a command that failed) and the rest of the line runs.
+- Ctrl-C on a foreground command stops the rest of the line (`$?` 130). Ctrl-Z stops that job
+  (`[N]+  Stopped                 <pipeline>`: the job text is the pipeline, not the whole line); the
+  stopped job counts as status 148 and the next item runs.
+- An error found at expansion time (`echo >&x`) in the middle of a list counts as that command
+  ending with status 2 and the line goes on; the commands before it have already run (documented
+  limitation: a syntax error stops everything before anything runs).
+
+### 4.5 `&` and the forms that are rejected
+
+An unquoted `&` that is not part of `&&`, `>&` or `<&` ends the pipeline before it and starts it in
+the background (`[N] pid`, a job as before); the next command runs at once: `sleep 1 & echo hi`,
+`a & b &`, `a; b &`, `a&b`. Before feature 004 a `&` in the middle of a line was plain text
+(`echo a & b` printed `a & b`); quote it (`'&'`, `\&`) to keep the character.
+
+- A pipeline followed by `&` must not be joined to another by `&&` or `||`: `a && b &`, `a || b &`
+  and `a & && b` are syntax errors (near `&`, `&`, `&&`). Limitation: bash would run the whole
+  chain in the background. `a & b && c` is fine (`b && c` is a separate chain).
+- `a &; b` is an error near `;`, `a & & b` and a line that starts with `&` (or is only `&`) near
+  `&`, as in bash.
+- `&>` and `&>>` (bash's redirect of both outputs) are rejected as errors near `&`: otherwise they
+  would silently background the command and create a file from the empty command that follows.
+  `|&` is an error near `&` too (it is not a pipe here).
+- Each of these is pinned by the golden case `list_errors`; the behaviour of `&` by
+  `list_background` and `tests/pty/test_lists.py`. `list_background` depends on the clock like
+  `jobs_background` and `jobs_done`: the `sleep 1` jobs must still be running when `jobs` runs.
+
+Limitations of command lists and input redirects, all listed here and each pinned by a test:
+here-documents and here-strings (`<<`, `<<<`), `<&`, `<>`, `&>`, `&>>` and `|&` are syntax errors;
+`a && b &` is an error (bash backgrounds the whole chain); a line ending in `&&`, `||` or `|` is an
+error near `newline` (no continuation prompt, where bash waits for more input); a bad `>&` target
+is found when the command is about to run, so in `echo a; echo >&x` the first command has run.
+Pins: `list_errors`, `redirect_input_unsupported`, `list_expansion_error`, `tests/pty/test_lists.py`.
+
+### 4.6 Expansion (`expand_word`, `expand_pipeline`)
 
 Runs on each pipeline right before it executes (see section 3); the tokenizer never expands.
 For every command word and every redirect target:
@@ -291,6 +351,15 @@ For every command word and every redirect target:
 
 ## 5. Redirects at execution time
 
+Input redirects (`cmd < file`, `N< file`, fd 0 by default) work like `>`: the target is an expanded
+word, the fd before `<` must be a plain number up to 9 (`10<` gives `10: Bad file descriptor`), an
+unreadable file prints `file: <strerror>` and the command does not run (status 1, redirects are
+applied before dispatch, so builtins, external programs and unknown commands behave the same), and
+in a pipeline stage the file wins over the pipe (`echo x | cat < f` reads `f`). Not supported, and
+reported as ``syntax error near unexpected token `<'``: here-documents (`<<`), here-strings
+(`<<<`), input duplication (`<&`) and read-write open (`<>`); each is pinned by the golden case
+`redirect_input_unsupported`.
+
 The core idea: redirect **the shell process's own fds** (with `dup2`), run the
 command, then restore them. Because both `std::cout`/`std::cerr` (used by
 builtins) and child processes (after `fork`/`exec`) follow the fd, a single
@@ -300,7 +369,11 @@ mechanism covers both.
 
 - **Constructor**:
   1. Flush `cout`/`cerr` so earlier output does not leak into the file.
-  2. For a file redirect: `open` (`O_TRUNC` for `>`, `O_APPEND` for `>>`).
+  2. For a file redirect: `open` (`O_TRUNC` for `>`, `O_APPEND` for `>>`, `O_RDONLY` for `<`: the
+     `OpenMode`). The open goes through `open_interruptible` ([src/signals.cpp](src/signals.cpp)),
+     so a `cat < fifo` that waits for a writer can be ended with Ctrl-C (`interrupted()` is true,
+     `error()` empty; `run_command` then returns status 130 with `interrupted`, which stops the
+     rest of a command list).
      For `>&N`: use fd `N` directly as the source.
   3. `install(source_fd)`: save a copy of the target fd with
      `fcntl(F_DUPFD_CLOEXEC, 10)` (an fd >= 10, close-on-exec), then

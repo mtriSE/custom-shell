@@ -20,10 +20,23 @@ namespace
     std::string error;
   };
 
+  // The line as one pipeline (REQUIRE-fails if it is a list); nullopt on a syntax error.
+  std::optional<PipelineNode> parse_one(const std::string &line, std::string &error)
+  {
+    auto node = parse_line(line, error);
+    if (!node)
+    {
+      return std::nullopt;
+    }
+    const auto *pipeline = std::get_if<PipelineNode>(&node->value);
+    REQUIRE(pipeline != nullptr);
+    return *pipeline;
+  }
+
   Parsed parse(const std::string &line, int status = 3, const std::string &home = "")
   {
     Parsed parsed;
-    auto node = parse_pipeline(line, parsed.error);
+    auto node = parse_one(line, parsed.error);
     if (node)
     {
       parsed.pipeline = expand_pipeline(*node, {.last_status = status, .home = home}, parsed.error);
@@ -170,7 +183,7 @@ TEST_CASE("a trailing unquoted & makes the pipeline a background job")
   REQUIRE(background.pipeline->background);
   REQUIRE(background.pipeline->stages[0].args == Args{"sleep", "1"});
 
-  for (const char *line : {"echo \"&\"", "echo \\&", "echo a&", "echo '&'"})
+  for (const char *line : {"echo \"&\"", "echo \\&", "echo '&'", "echo a'&'"})
   {
     auto parsed = parse(line);
     INFO(line);
@@ -178,6 +191,12 @@ TEST_CASE("a trailing unquoted & makes the pipeline a background job")
     REQUIRE_FALSE(parsed.pipeline->background);
     REQUIRE(parsed.pipeline->stages[0].args.size() == 2);
   }
+
+  // Since feature 004 an unquoted & glued to a word is the operator too (it used to be text).
+  auto glued = parse("echo a&");
+  REQUIRE(glued.pipeline.has_value());
+  REQUIRE(glued.pipeline->background);
+  REQUIRE(glued.pipeline->stages[0].args == Args{"echo", "a"});
 }
 
 TEST_CASE("pipelines")
@@ -231,7 +250,7 @@ TEST_CASE("redirect targets are expanded")
 TEST_CASE("parsing alone expands nothing")
 {
   std::string error;
-  auto node = parse_pipeline("echo $?", error);
+  auto node = parse_one("echo $?", error);
   REQUIRE(node.has_value());
   REQUIRE(node->stages[0].words.size() == 2);
   const Word &word = node->stages[0].words[1];
@@ -239,7 +258,7 @@ TEST_CASE("parsing alone expands nothing")
   REQUIRE(word.pieces[0].text == "$?");
   REQUIRE(word.pieces[0].quoting == Quoting::Unquoted);
 
-  auto redirected = parse_pipeline("echo $?>f", error);
+  auto redirected = parse_one("echo $?>f", error);
   REQUIRE(redirected.has_value());
   REQUIRE(redirected->stages[0].words.size() == 2);
   REQUIRE(redirected->stages[0].redirects.size() == 1);
@@ -260,4 +279,88 @@ TEST_CASE("~ is expanded in redirect targets and in background lines")
   auto piped = parse("echo ~ | cat ~/x", 0, "/usr");
   REQUIRE(piped.pipeline.has_value());
   REQUIRE(piped.pipeline->stages[1].args == Args{"cat", "/usr/x"});
+}
+
+TEST_CASE("a pipeline remembers its text")
+{
+  auto text_of = [](const std::string &line)
+  {
+    std::string error;
+    auto node = parse_line(line, error);
+    REQUIRE(node.has_value());
+    const auto *pipeline = std::get_if<PipelineNode>(&node->value);
+    REQUIRE(pipeline != nullptr);
+    return pipeline->text;
+  };
+
+  REQUIRE(text_of("  echo hi | cat  ") == "echo hi | cat");
+  REQUIRE(text_of("sleep 1 &") == "sleep 1");
+  REQUIRE(text_of("echo a > f") == "echo a > f");
+  REQUIRE(text_of("echo \"a b\"  'c'") == "echo \"a b\"  'c'");
+  REQUIRE(text_of("a | b &") == "a | b");
+}
+
+TEST_CASE("< redirects standard input")
+{
+  for (const char *line : {"cat < f", "cat <f", "cat 0< f", "cat 0<f"})
+  {
+    auto parsed = parse(line);
+    INFO(line);
+    REQUIRE(parsed.pipeline.has_value());
+    const auto &command = parsed.pipeline->stages[0];
+    REQUIRE(command.args == Args{"cat"});
+    REQUIRE(command.redirects.size() == 1);
+    REQUIRE(command.redirects[0].input);
+    REQUIRE(command.redirects[0].fd == 0);
+    REQUIRE(command.redirects[0].path == "f");
+  }
+
+  auto fd3 = parse("cat 3< f");
+  REQUIRE(fd3.pipeline.has_value());
+  REQUIRE(fd3.pipeline->stages[0].redirects.size() == 1);
+  REQUIRE(fd3.pipeline->stages[0].redirects[0].fd == 3);
+  REQUIRE(fd3.pipeline->stages[0].redirects[0].input);
+
+  auto both = parse("cat < f > g");
+  REQUIRE(both.pipeline.has_value());
+  const auto &redirects = both.pipeline->stages[0].redirects;
+  REQUIRE(redirects.size() == 2);
+  REQUIRE(redirects[0].input);
+  REQUIRE(redirects[0].path == "f");
+  REQUIRE_FALSE(redirects[1].input);
+  REQUIRE(redirects[1].fd == 1);
+  REQUIRE(redirects[1].path == "g");
+}
+
+TEST_CASE("a quoted or escaped < is an argument")
+{
+  auto parsed = parse("echo \"<\" '<' \\<");
+  REQUIRE(parsed.pipeline.has_value());
+  REQUIRE(parsed.pipeline->stages[0].args == Args{"echo", "<", "<", "<"});
+  REQUIRE(parsed.pipeline->stages[0].redirects.empty());
+}
+
+TEST_CASE("the target of < is expanded")
+{
+  auto home = parse("cat < ~/f", 0, "/usr");
+  REQUIRE(home.pipeline.has_value());
+  REQUIRE(home.pipeline->stages[0].redirects.size() == 1);
+  REQUIRE(home.pipeline->stages[0].redirects[0].path == "/usr/f");
+
+  auto status = parse("cat < f$?", 3);
+  REQUIRE(status.pipeline.has_value());
+  REQUIRE(status.pipeline->stages[0].redirects.size() == 1);
+  REQUIRE(status.pipeline->stages[0].redirects[0].path == "f3");
+}
+
+TEST_CASE("< errors and the forms that are not supported")
+{
+  expect_error("cat <", "syntax error near unexpected token `newline'");
+  expect_error("cat < < f", "syntax error near unexpected token `<'");
+  expect_error("cat 10< f", "10: Bad file descriptor");
+  // Here-documents, here-strings, input duplication and read-write open.
+  for (const char *line : {"cat << EOF", "cat <<< x", "cat <& 0", "cat <> f", "cat <<"})
+  {
+    expect_error(line, "syntax error near unexpected token `<'");
+  }
 }

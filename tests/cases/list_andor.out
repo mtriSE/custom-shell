@@ -1,0 +1,18 @@
+$ yes
+$ $ yes
+$ $ b
+$ b
+$ 1
+$ a
+b
+$ cd: /nonexistent: No such file or directory
+failed
+$ a
+b
+c
+$ && || &&
+$ syntax error near unexpected token `&&'
+$ syntax error near unexpected token `||'
+$ syntax error near unexpected token `&&'
+$ syntax error near unexpected token `newline'
+$ 

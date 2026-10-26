@@ -1,0 +1,9 @@
+cat << EOF
+echo $?
+cat <<< x
+echo $?
+cat <& 0
+echo $?
+cat <> f
+echo $?
+exit

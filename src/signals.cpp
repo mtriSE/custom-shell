@@ -108,3 +108,46 @@ void reset_child_signals()
   signal(SIGTTIN, SIG_DFL);
   signal(SIGTTOU, SIG_DFL);
 }
+
+int open_interruptible(const char *path, int flags, mode_t mode, bool &interrupted)
+{
+  interrupted = false;
+
+  // Without SA_RESTART the kernel returns EINTR from a blocked open() instead of restarting it.
+  struct sigaction saved {};
+  bool changed = false;
+  if (interactive)
+  {
+    struct sigaction action {};
+    if (sigaction(SIGINT, nullptr, &action) == 0 && (action.sa_flags & SA_RESTART) != 0)
+    {
+      saved = action;
+      action.sa_flags &= ~SA_RESTART;
+      changed = sigaction(SIGINT, &action, nullptr) == 0;
+    }
+  }
+
+  int fd;
+  while (true)
+  {
+    fd = open(path, flags, mode);
+    if (fd >= 0 || errno != EINTR)
+    {
+      break;
+    }
+    // EINTR from some other signal is retried; Ctrl-C ends the wait.
+    if (take_interrupt())
+    {
+      interrupted = true;
+      break;
+    }
+  }
+
+  const int saved_errno = errno;
+  if (changed)
+  {
+    sigaction(SIGINT, &saved, nullptr);
+  }
+  errno = saved_errno;
+  return fd;
+}

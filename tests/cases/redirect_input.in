@@ -1,0 +1,10 @@
+echo hi > f
+cat < f
+cat < f > g
+cat g
+cat < f | cat
+echo x | cat < f
+cat 0< f
+echo "<" '<' \<
+cat < ~/no_such_file
+exit

@@ -1,0 +1,6 @@
+sleep 1 & echo hi
+echo $?
+jobs
+sleep 1 & sleep 1 & jobs
+sleep 1 | sleep 1 & echo y
+exit

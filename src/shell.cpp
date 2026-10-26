@@ -93,32 +93,38 @@ void Shell::run()
       continue;
     }
 
-    Outcome outcome = run_tree(*tree, input, context_from_environment(last_status_));
-    last_status_ = outcome.status;
-    // The terminal shows nothing of its own after a command killed by Ctrl-C or Ctrl-\, so
-    // the prompt would start mid-line. Only on a terminal: piped output stays as before.
-    if (outcome.interrupted && is_interactive())
+    // Runs after each pipeline of the line, once its redirects are undone.
+    auto notify = [&](Outcome &outcome)
     {
-      std::cout << '\n';
-    }
-    if (outcome.stopped_job > 0)
-    {
-      // The terminal echoed ^Z without a newline.
-      std::cout << '\n' << format_job_line(*find_job(outcome.stopped_job)) << std::endl;
-    }
-    if (outcome.job_number > 0)
-    {
-      std::cout << '[' << outcome.job_number << "] " << outcome.job_pid << std::endl;
-    }
-    if (outcome.exit)
-    {
-      if (is_interactive() && !exit_was_refused && has_stopped_jobs())
+      // The terminal shows nothing of its own after a command killed by Ctrl-C or Ctrl-\, so
+      // the prompt would start mid-line. Only on a terminal: piped output stays as before.
+      if (outcome.interrupted && is_interactive())
+      {
+        std::cout << '\n';
+      }
+      if (outcome.stopped_job > 0)
+      {
+        // The terminal echoed ^Z without a newline.
+        std::cout << '\n' << format_job_line(*find_job(outcome.stopped_job)) << std::endl;
+      }
+      if (outcome.job_number > 0)
+      {
+        std::cout << '[' << outcome.job_number << "] " << outcome.job_pid << std::endl;
+      }
+      // `exit` with stopped jobs is refused once, like a command that failed.
+      if (outcome.exit && is_interactive() && !exit_was_refused && has_stopped_jobs())
       {
         std::cout << "There are stopped jobs." << std::endl;
-        last_status_ = 1;
         exit_refused_ = true;
-        continue;
+        outcome.exit = false;
+        outcome.status = 1;
       }
+    };
+
+    Outcome outcome = run_tree(*tree, context_from_environment(last_status_), notify);
+    last_status_ = outcome.status;
+    if (outcome.exit)
+    {
       end_stopped_jobs();
       break;
     }

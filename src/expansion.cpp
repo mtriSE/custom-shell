@@ -81,7 +81,7 @@ std::optional<Pipeline> expand_pipeline(const PipelineNode &node, const Expansio
 
     for (const auto &parsed : stage.redirects)
     {
-      Redirect redirect{.fd = parsed.fd, .append = parsed.append};
+      Redirect redirect{.fd = parsed.fd, .append = parsed.append, .input = parsed.input};
       std::string target = expand_word(parsed.target, context);
 
       if (parsed.dup)

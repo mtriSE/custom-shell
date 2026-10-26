@@ -1,0 +1,7 @@
+$ a
+x: Bad fd number
+2
+$ b
+10: Bad file descriptor
+2
+$ 

@@ -1,0 +1,25 @@
+; echo a
+&& echo a
+|| echo a
+& echo a
+echo a ;; echo b
+echo a;;
+echo a ; ; echo b
+echo a && && echo b
+echo a || || echo b
+echo a | ; echo b
+echo a &; echo b
+echo a & && echo b
+echo a & & echo b
+echo a &&
+echo a ||
+echo a |
+echo a && echo b &
+echo a || echo b &
+echo hi &> f
+echo hi &>> f
+echo a |& echo b
+&
+echo a; echo b ||
+echo $?
+exit

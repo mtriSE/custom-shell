@@ -47,10 +47,3 @@ inline bool is_plain_number(const Word &word)
   }
   return true;
 }
-
-// True for a word that is one unquoted piece with exactly this text (`&` as the background mark).
-inline bool is_literal(const Word &word, std::string_view text)
-{
-  return word.pieces.size() == 1 && word.pieces[0].quoting == Quoting::Unquoted &&
-         word.pieces[0].text == text;
-}

@@ -1,0 +1,17 @@
+$ a
+b
+$ 1
+$ a
+$ a
+b
+$ x
+y
+$ hi
+$ cd: /nonexistent: No such file or directory
+still here
+$ a;b c;d e;f
+$ syntax error near unexpected token `;'
+$ syntax error near unexpected token `;;'
+$ syntax error near unexpected token `;'
+$ 2
+$ bye

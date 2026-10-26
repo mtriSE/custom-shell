@@ -1,0 +1,11 @@
+cat < nofile
+echo $?
+nosuch < nofile
+echo $?
+type < nofile
+echo $?
+cat < /nonexistent_dir/f
+cat 10< f
+cat <
+cat < < f
+exit

@@ -1,0 +1,16 @@
+true && echo yes
+false && echo no
+false || echo yes
+true || echo no
+false && echo a || echo b
+true || echo a && echo b
+false && true; echo $?
+echo a | cat && echo b
+cd /nonexistent && echo ok || echo failed
+echo a && echo b; echo c || echo d
+echo '&&' "||" \&\&
+&& echo x
+|| echo x
+echo a && && echo b
+echo a &&
+exit
