@@ -35,8 +35,25 @@ struct PipelineNode
   std::string text;
 };
 
+// How two pipelines of a chain are joined: `&&` runs the right one only after status 0, `||` only
+// after a non-zero status.
+enum class Connector
+{
+  And,
+  Or,
+};
+
+// Pipelines joined by `&&` and `||`, evaluated from the left with the same priority. Two or more
+// pipelines (a single one is not wrapped); `connectors.size() == pipelines.size() - 1`; no
+// pipeline of a chain is in the background.
+struct AndOrNode
+{
+  std::vector<PipelineNode> pipelines;
+  std::vector<Connector> connectors;
+};
+
 // What a list holds between its `;`.
-using Item = std::variant<PipelineNode>;
+using Item = std::variant<PipelineNode, AndOrNode>;
 
 // Items separated by `;` (two or more; a single item is not wrapped).
 struct ListNode
@@ -48,7 +65,7 @@ struct ListNode
 // added next to these.
 struct Node
 {
-  std::variant<PipelineNode, ListNode> value;
+  std::variant<PipelineNode, AndOrNode, ListNode> value;
 };
 
 // Parses one input line into its command tree. On a syntax error returns std::nullopt and sets

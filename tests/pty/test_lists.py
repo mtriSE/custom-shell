@@ -57,5 +57,35 @@ class SemicolonTests(ShellTestCase):
         self.assertFalse(self.shell.alive())
 
 
+class ChainTests(ShellTestCase):
+    def interrupt(self, line):
+        self.shell.start(line)
+        self.assertTrue(process_running("sleep 100"))
+        self.shell.send(CTRL_C)
+        return self.shell.expect(PROMPT, 1.0)
+
+    def stop(self, line):
+        self.shell.start(line)
+        self.shell.send(CTRL_Z)
+        return self.shell.expect(PROMPT, 1.0).replace("^Z", "")
+
+    def test_ctrl_c_stops_the_rest_of_an_and_chain(self):
+        self.assertNotIn("after", self.interrupt("sleep 100 && echo after"))
+        self.assertEqual(self.shell.status(), 130)
+
+    def test_ctrl_c_stops_the_rest_of_an_or_chain(self):
+        self.assertNotIn("after", self.interrupt("sleep 100 || echo after"))
+        self.assertEqual(self.shell.status(), 130)
+
+    def test_a_stopped_job_ends_an_and_chain_with_148(self):
+        out = self.stop("sleep 100 && echo after")
+        self.assertEqual(out, "\n" + job_line(1, "Stopped", "sleep 100") + "\n" + PROMPT)
+        self.assertEqual(self.shell.status(), 148)
+
+    def test_a_stopped_job_lets_an_or_chain_go_on(self):
+        out = self.stop("sleep 100 || echo after")
+        self.assertEqual(out, "\n" + job_line(1, "Stopped", "sleep 100") + "\nafter\n" + PROMPT)
+
+
 if __name__ == "__main__":
     unittest.main()

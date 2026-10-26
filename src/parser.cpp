@@ -21,6 +21,8 @@ namespace
     Word,
     Redirect,   // `>`, `>>`, `>&`; `fd`/`append`/`dup` describe it
     Pipe,       // `|`
+    And,        // `&&`
+    Or,         // `||`
     Semi,       // `;`
     DoubleSemi, // `;;` (always an error)
   };
@@ -126,7 +128,28 @@ namespace
 
       case '|':
         end_token();
-        tokens_.push_back({.kind = Kind::Pipe, .begin = pos_, .end = pos_ + 1});
+        if (next_is('|'))
+        {
+          tokens_.push_back({.kind = Kind::Or, .begin = pos_, .end = pos_ + 2});
+          ++pos_; // consume the second `|`
+        }
+        else
+        {
+          tokens_.push_back({.kind = Kind::Pipe, .begin = pos_, .end = pos_ + 1});
+        }
+        break;
+
+      case '&':
+        if (next_is('&'))
+        {
+          end_token();
+          tokens_.push_back({.kind = Kind::And, .begin = pos_, .end = pos_ + 2});
+          ++pos_; // consume the second `&`
+        }
+        else
+        {
+          append(c, Quoting::Unquoted); // a lone `&` is still text, see parse_line
+        }
         break;
 
       case ';':
@@ -349,7 +372,8 @@ namespace
   }
 
   // Walks the tokens once, left to right, so the first error by position is the one reported.
-  // Stages are closed by `|`, pipelines by `;` and the end of the line.
+  // Stages are closed by `|`, pipelines by `&&`, `||`, `;` and the end of the line, chains by `;`
+  // and the end of the line.
   class Grouper
   {
   public:
@@ -380,6 +404,23 @@ namespace
           }
           break;
 
+        case Kind::And:
+        case Kind::Or:
+        {
+          const char *text = token.kind == Kind::And ? "&&" : "||";
+          if (stage_.empty())
+          {
+            error = syntax_error(text);
+            return std::nullopt;
+          }
+          if (!close_pipeline(text, error))
+          {
+            return std::nullopt;
+          }
+          chain_.connectors.push_back(token.kind == Kind::And ? Connector::And : Connector::Or);
+          break;
+        }
+
         case Kind::Semi:
           if (stage_.empty())
           {
@@ -390,6 +431,7 @@ namespace
           {
             return std::nullopt;
           }
+          end_item();
           break;
 
         case Kind::DoubleSemi:
@@ -398,30 +440,35 @@ namespace
         }
       }
 
-      // End of the line: a `|` still waiting for its command is an error, a trailing `;` is not.
-      bool pipeline_open = !stage_.empty() || !pipeline_.stages.empty();
-      if (pipeline_open)
+      // End of the line: an operator still waiting for its command is an error, a trailing `;`
+      // is not.
+      const bool command_pending = !stage_.empty();
+      if (!command_pending && (!pipeline_.stages.empty() || !chain_.pipelines.empty()))
       {
-        if (stage_.empty())
-        {
-          error = syntax_error("newline");
-          return std::nullopt;
-        }
+        error = syntax_error("newline");
+        return std::nullopt;
+      }
+      if (command_pending)
+      {
         if (!close_pipeline("newline", error))
         {
           return std::nullopt;
         }
+        end_item();
       }
 
-      // A trailing lone `&` runs the last pipeline of the line in the background.
+      // A trailing lone `&` runs the last pipeline of the line in the background; a pipeline that
+      // is part of a chain cannot be (`a && b &` is an error: bash would run the whole chain).
       if (background)
       {
-        if (!pipeline_open)
+        auto *last = items_.empty() || !command_pending ? nullptr
+                                                        : std::get_if<PipelineNode>(&items_.back());
+        if (last == nullptr)
         {
           error = syntax_error("&");
           return std::nullopt;
         }
-        std::get<PipelineNode>(items_.back()).background = true;
+        last->background = true;
       }
 
       if (items_.empty())
@@ -433,7 +480,7 @@ namespace
       }
       if (items_.size() == 1)
       {
-        return Node{std::get<PipelineNode>(std::move(items_[0]))};
+        return std::visit([](auto &&item) { return Node{std::move(item)}; }, std::move(items_[0]));
       }
       return Node{ListNode{std::move(items_)}};
     }
@@ -463,7 +510,7 @@ namespace
       return true;
     }
 
-    // The current pipeline is complete: it becomes an item of the list.
+    // The current pipeline is complete: it joins the current chain.
     bool close_pipeline(const std::string &end_name, std::string &error)
     {
       if (!close_stage(end_name, error))
@@ -471,15 +518,31 @@ namespace
         return false;
       }
       pipeline_.text = input_.substr(begin_, end_ - begin_);
-      items_.push_back(std::move(pipeline_));
+      chain_.pipelines.push_back(std::move(pipeline_));
       pipeline_ = {};
       has_tokens_ = false;
       return true;
     }
 
+    // The current chain is complete: it becomes an item of the list (a chain of one pipeline is
+    // just that pipeline).
+    void end_item()
+    {
+      if (chain_.pipelines.size() == 1)
+      {
+        items_.push_back(std::move(chain_.pipelines[0]));
+      }
+      else
+      {
+        items_.push_back(std::move(chain_));
+      }
+      chain_ = {};
+    }
+
     const std::string &input_;
     std::vector<Token> stage_;
     PipelineNode pipeline_;
+    AndOrNode chain_;
     std::vector<Item> items_;
     size_t begin_ = 0;
     size_t end_ = 0;

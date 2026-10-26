@@ -274,15 +274,26 @@ It walks the tokens in order:
 Redirects are **separated from the words**, so builtins and external programs never
 see `2>` or the target file name.
 
-### 4.4 Command lists (`;`)
+### 4.4 Command lists (`;`, `&&`, `||`)
 
-A line is one pipeline or a list of pipelines separated by an unquoted `;` (with or without spaces:
-`a;b`). `parse_line` returns a `Node` (a `PipelineNode` or a `ListNode`) and the `evaluator` runs it:
+A line is one pipeline, a chain of pipelines joined by an unquoted `&&` or `||`, or a list of them
+separated by `;` (with or without spaces: `a;b`, `a&&b`). `||` used to be read as two pipes and gave
+a syntax error; it is now an operator. `parse_line` returns a `Node` (`PipelineNode`, `AndOrNode` or
+`ListNode`) and the `evaluator` runs it:
+
+- `|` binds tighter than `&&` and `||`, which have the same priority and group from the left, and
+  `;` is the lowest: `false && echo a || echo b` prints `b`, `true || echo a && echo b` prints `b`.
+  `&&` runs the right side only after status 0, `||` only after a non-zero status; a skipped
+  command leaves `$?` as it was (`false && true; echo $?` prints `1`).
+- A line ending in `&&` or `||` is a syntax error near `newline` (there is no continuation prompt,
+  where bash waits for more input); `&&`/`||` at the start or after another operator are errors
+  near that operator.
 
 - Every item runs, in order, whatever the status of the previous one; the status of the line is
   the last one's. `$?` is read when each pipeline is about to run (`false; echo $?` prints `1`).
 - A trailing `;` is allowed (`echo a;`). An empty command is a syntax error near the operator that
   follows it: `; a` and `a ; ; b` are errors near `;`, `a ;; b` and `a;;` near `;;`, as in bash.
+
   Nothing on the line runs when the line has a syntax error.
 - `exit` ends the line and the shell. If there are stopped jobs the first `exit` is refused
   (`There are stopped jobs.`, status 1, as a command that failed) and the rest of the line runs.

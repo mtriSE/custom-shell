@@ -86,3 +86,90 @@ TEST_CASE("; in the wrong place is a syntax error")
   expect_error("a ; ; b", ";");
   expect_error("a | ; b", ";");
 }
+
+namespace
+{
+  struct Chain
+  {
+    std::vector<std::string> texts;
+    std::vector<Connector> connectors;
+  };
+
+  // The chain a line parses to, or REQUIRE-fails if the line is not exactly one chain.
+  Chain chain_of(const std::string &line)
+  {
+    std::string error;
+    auto node = parse(line, error);
+    INFO(line);
+    REQUIRE(node.has_value());
+    const auto *chain = std::get_if<AndOrNode>(&node->value);
+    REQUIRE(chain != nullptr);
+    Chain result;
+    for (const auto &pipeline : chain->pipelines)
+    {
+      result.texts.push_back(pipeline.text);
+    }
+    result.connectors = chain->connectors;
+    return result;
+  }
+
+  using Connectors = std::vector<Connector>;
+}
+
+TEST_CASE("&& and || join pipelines into a chain")
+{
+  auto both = chain_of("a && b");
+  REQUIRE(both.texts == Texts{"a", "b"});
+  REQUIRE(both.connectors == Connectors{Connector::And});
+
+  auto mixed = chain_of("a || b && c");
+  REQUIRE(mixed.texts == Texts{"a", "b", "c"});
+  REQUIRE(mixed.connectors == Connectors{Connector::Or, Connector::And});
+
+  REQUIRE(chain_of("a&&b").texts == Texts{"a", "b"});
+  REQUIRE(chain_of("a||b").texts == Texts{"a", "b"});
+  REQUIRE(chain_of("a | b && c | d").texts == Texts{"a | b", "c | d"});
+}
+
+TEST_CASE("a chain is an item of a list")
+{
+  std::string error;
+  auto node = parse("a && b; c || d", error);
+  REQUIRE(node.has_value());
+  const auto *list = std::get_if<ListNode>(&node->value);
+  REQUIRE(list != nullptr);
+  REQUIRE(list->items.size() == 2);
+  REQUIRE(std::holds_alternative<AndOrNode>(list->items[0]));
+  REQUIRE(std::holds_alternative<AndOrNode>(list->items[1]));
+
+  auto mixed = parse("a; b && c", error);
+  REQUIRE(mixed.has_value());
+  const auto *second = std::get_if<ListNode>(&mixed->value);
+  REQUIRE(second != nullptr);
+  REQUIRE(std::holds_alternative<PipelineNode>(second->items[0]));
+  REQUIRE(std::holds_alternative<AndOrNode>(second->items[1]));
+}
+
+TEST_CASE("a quoted or escaped && and || are words")
+{
+  for (const char *line : {"echo '&&'", "echo \"||\"", "echo \\&\\&", "echo a'||'b"})
+  {
+    std::string error;
+    auto node = parse(line, error);
+    INFO(line);
+    REQUIRE(node.has_value());
+    REQUIRE(std::get_if<PipelineNode>(&node->value) != nullptr);
+  }
+}
+
+TEST_CASE("&& and || in the wrong place are syntax errors")
+{
+  expect_error("&& a", "&&");
+  expect_error("|| a", "||");
+  expect_error("a && && b", "&&");
+  expect_error("a || || b", "||");
+  expect_error("a &&", "newline");
+  expect_error("a ||", "newline");
+  expect_error("a && ; b", ";");
+  expect_error("a | || b", "||");
+}

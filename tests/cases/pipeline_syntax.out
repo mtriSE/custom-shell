@@ -1,6 +1,6 @@
 $ syntax error near unexpected token `newline'
 $ syntax error near unexpected token `|'
-$ syntax error near unexpected token `|'
-$ 2
+$ a
+$ 0
 $ a|b c|d e|f
 $ 
