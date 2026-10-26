@@ -19,7 +19,8 @@ namespace
   enum class Kind
   {
     Word,
-    Redirect,   // `>`, `>>`, `>&`; `fd`/`append`/`dup` describe it
+    Redirect,   // `>`, `>>`, `>&`, `<`; `fd`/`append`/`dup`/`input` describe it
+    Unsupported, // `<<`, `<<<`, `<&`, `<>` (always an error, named `<`)
     Pipe,       // `|`
     And,        // `&&`
     Or,         // `||`
@@ -36,6 +37,8 @@ namespace
     bool append = false;
     // `>&`: the following word is an fd to copy, not a file.
     bool dup = false;
+    // `<`: the file is read, `fd` defaults to 0.
+    bool input = false;
     // Where the token is in the line: [begin, end). Used for the text of a pipeline.
     size_t begin = 0;
     size_t end = 0;
@@ -124,6 +127,10 @@ namespace
 
       case '>':
         start_redirect();
+        break;
+
+      case '<':
+        start_input_redirect();
         break;
 
       case '|':
@@ -263,25 +270,8 @@ namespace
     // `>>`, `1>>` and `2>>` append instead of truncating; `>&` copies an fd.
     void start_redirect()
     {
-      int fd = 1;
       size_t begin = pos_;
-      std::optional<int> number;
-      if (in_token_ && is_plain_number(current_))
-      {
-        number = fd_from_digits(current_.pieces[0].text);
-      }
-
-      if (number)
-      {
-        fd = *number;
-        begin = token_begin_; // the digits are part of the operator
-        current_ = {};
-        in_token_ = false;
-      }
-      else
-      {
-        end_token();
-      }
+      const int fd = take_fd(1, begin);
 
       // A second `>` right after makes it `>>` (`>>`, `1>>`, `2>>`).
       bool append = next_is('>');
@@ -303,6 +293,49 @@ namespace
                          .dup = dup,
                          .begin = begin,
                          .end = pos_ + 1});
+    }
+
+    // `<` redirects input, with an optional fd before it (`3< f`) that defaults to 0. Here-documents
+    // (`<<`), here-strings (`<<<`), input duplication (`<&`) and read-write open (`<>`) are not
+    // supported: they become one token that is reported as a syntax error near `<`.
+    void start_input_redirect()
+    {
+      size_t begin = pos_;
+      const int fd = take_fd(0, begin);
+
+      if (next_is('<') || next_is('&') || next_is('>'))
+      {
+        ++pos_; // consume the second character
+        tokens_.push_back({.kind = Kind::Unsupported, .begin = begin, .end = pos_ + 1});
+        return;
+      }
+      tokens_.push_back({.kind = Kind::Redirect,
+                         .fd = fd,
+                         .input = true,
+                         .begin = begin,
+                         .end = pos_ + 1});
+    }
+
+    // The fd written right before a redirect operator: a plain number is taken (and `begin` moves
+    // to its start), anything else pending is closed as an argument of its own and the fd is
+    // `default_fd`.
+    int take_fd(int default_fd, size_t &begin)
+    {
+      std::optional<int> number;
+      if (in_token_ && is_plain_number(current_))
+      {
+        number = fd_from_digits(current_.pieces[0].text);
+      }
+
+      if (number)
+      {
+        begin = token_begin_; // the digits are part of the operator
+        current_ = {};
+        in_token_ = false;
+        return *number;
+      }
+      end_token();
+      return default_fd;
     }
 
     // --- State --------------------------------------------------------------
@@ -349,8 +382,8 @@ namespace
       bool has_target = i + 1 < tokens.size() && tokens[i + 1].kind == Kind::Word;
       if (!has_target)
       {
-        // Name the offending token like bash: another `>`, or what ended the stage.
-        error = syntax_error(i + 1 < tokens.size() ? ">" : end_name);
+        // Name the offending token like bash: the next operator, or what ended the stage.
+        error = syntax_error(i + 1 >= tokens.size() ? end_name : tokens[i + 1].input ? "<" : ">");
         return std::nullopt;
       }
 
@@ -364,7 +397,8 @@ namespace
       command.redirects.push_back({.fd = tokens[i].fd,
                                    .target = std::move(tokens[i + 1].word),
                                    .append = tokens[i].append,
-                                   .dup = tokens[i].dup});
+                                   .dup = tokens[i].dup,
+                                   .input = tokens[i].input});
       ++i; // the target word is consumed too
     }
 
@@ -436,6 +470,10 @@ namespace
 
         case Kind::DoubleSemi:
           error = syntax_error(";;");
+          return std::nullopt;
+
+        case Kind::Unsupported:
+          error = syntax_error("<");
           return std::nullopt;
         }
       }

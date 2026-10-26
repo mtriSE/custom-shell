@@ -1,4 +1,5 @@
 """Command lists on a terminal (specs/004-command-lists-and-input-redirect)."""
+import os
 import time
 import unittest
 
@@ -85,6 +86,36 @@ class ChainTests(ShellTestCase):
     def test_a_stopped_job_lets_an_or_chain_go_on(self):
         out = self.stop("sleep 100 || echo after")
         self.assertEqual(out, "\n" + job_line(1, "Stopped", "sleep 100") + "\nafter\n" + PROMPT)
+
+
+class InputRedirectTests(ShellTestCase):
+    def make_fifo(self):
+        os.mkfifo(os.path.join(self.shell.cwd, "ff"))
+
+    def wait_blocked(self, line):
+        """Types `line` and checks that the shell is still busy (no prompt) a moment later."""
+        self.shell.send(line + "\n")
+        time.sleep(0.3)
+        out = self.shell.drain(0.05)
+        self.assertNotIn(PROMPT, out)
+        # `<` must be taken as a redirect, not as a file name for cat.
+        self.assertNotIn("No such file", out)
+
+    def test_ctrl_c_ends_the_wait_for_a_fifo_writer(self):
+        self.make_fifo()
+        self.wait_blocked("cat < ff")
+        self.shell.send(CTRL_C)
+        self.shell.expect(PROMPT, 1.0)
+        self.assertEqual(self.shell.status(), 130)
+        self.assertEqual(self.shell.run("echo ok"), "ok\n")
+
+    def test_ctrl_c_during_the_open_stops_the_rest_of_the_line(self):
+        self.make_fifo()
+        self.wait_blocked("echo before; cat < ff; echo after")
+        self.shell.send(CTRL_C)
+        out = self.shell.expect(PROMPT, 1.0)
+        self.assertNotIn("after", out)
+        self.assertEqual(self.shell.status(), 130)
 
 
 if __name__ == "__main__":

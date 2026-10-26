@@ -3,7 +3,7 @@
 A POSIX-style shell written in C++23.
 
 Features: quoting and backslash escapes, `$?`, `~` expansion, redirection (`>`, `>>`, `N>`,
-`>&N`), pipelines (`a | b | c`), command lists with `;`, `&&` and `||`, background jobs (`&`, `jobs`, `Done` reports), job
+`>&N`, and `<` for input), pipelines (`a | b | c`), command lists with `;`, `&&` and `||`, background jobs (`&`, `jobs`, `Done` reports), job
 control (Ctrl-Z stops the running command, `fg` and `bg` continue it, a warning when you
 leave with stopped jobs), the builtins
 `exit`, `echo`, `type`, `pwd`, `cd`, `jobs`, `fg`, `bg` and `complete`, and TAB

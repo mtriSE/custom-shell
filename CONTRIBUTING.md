@@ -325,6 +325,15 @@ For every command word and every redirect target:
 
 ## 5. Redirects at execution time
 
+Input redirects (`cmd < file`, `N< file`, fd 0 by default) work like `>`: the target is an expanded
+word, the fd before `<` must be a plain number up to 9 (`10<` gives `10: Bad file descriptor`), an
+unreadable file prints `file: <strerror>` and the command does not run (status 1, redirects are
+applied before dispatch, so builtins, external programs and unknown commands behave the same), and
+in a pipeline stage the file wins over the pipe (`echo x | cat < f` reads `f`). Not supported, and
+reported as ``syntax error near unexpected token `<'``: here-documents (`<<`), here-strings
+(`<<<`), input duplication (`<&`) and read-write open (`<>`); each is pinned by the golden case
+`redirect_input_unsupported`.
+
 The core idea: redirect **the shell process's own fds** (with `dup2`), run the
 command, then restore them. Because both `std::cout`/`std::cerr` (used by
 builtins) and child processes (after `fork`/`exec`) follow the fd, a single
@@ -334,7 +343,11 @@ mechanism covers both.
 
 - **Constructor**:
   1. Flush `cout`/`cerr` so earlier output does not leak into the file.
-  2. For a file redirect: `open` (`O_TRUNC` for `>`, `O_APPEND` for `>>`).
+  2. For a file redirect: `open` (`O_TRUNC` for `>`, `O_APPEND` for `>>`, `O_RDONLY` for `<`: the
+     `OpenMode`). The open goes through `open_interruptible` ([src/signals.cpp](src/signals.cpp)),
+     so a `cat < fifo` that waits for a writer can be ended with Ctrl-C (`interrupted()` is true,
+     `error()` empty; `run_command` then returns status 130 with `interrupted`, which stops the
+     rest of a command list).
      For `>&N`: use fd `N` directly as the source.
   3. `install(source_fd)`: save a copy of the target fd with
      `fcntl(F_DUPFD_CLOEXEC, 10)` (an fd >= 10, close-on-exec), then

@@ -27,6 +27,8 @@ public:
   FdRedirect &operator=(const FdRedirect &) = delete;
 
   bool ok() const { return active_; }
+  // True when opening the file was ended by Ctrl-C (`error()` is then empty).
+  bool interrupted() const { return interrupted_; }
   const std::string &error() const { return error_; }
 
 private:
@@ -39,5 +41,6 @@ private:
   bool active_ = false;
   // False if `fd_` was closed beforehand: restoring then means closing it.
   bool was_open_ = true;
+  bool interrupted_ = false;
   std::string error_;
 };

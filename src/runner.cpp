@@ -35,16 +35,20 @@ namespace
       }
     }
 
-    // Returns false (with the reason in `error`) if the target can't be opened.
-    bool apply(const Redirect &redirect, std::string &error)
+    // Returns false if the target can't be opened: the reason is in `error`, or `interrupted` is
+    // set when Ctrl-C ended the wait for it (no message then).
+    bool apply(const Redirect &redirect, std::string &error, bool &interrupted)
     {
+      const OpenMode mode = redirect.input    ? OpenMode::Read
+                            : redirect.append ? OpenMode::Append
+                                              : OpenMode::Truncate;
       auto fd_redirect = redirect.dup_from >= 0
                              ? std::make_unique<FdRedirect>(redirect.fd, redirect.dup_from)
-                             : std::make_unique<FdRedirect>(redirect.fd, redirect.path,
-                                              redirect.append ? OpenMode::Append : OpenMode::Truncate);
+                             : std::make_unique<FdRedirect>(redirect.fd, redirect.path, mode);
       if (!fd_redirect->ok())
       {
         error = fd_redirect->error();
+        interrupted = fd_redirect->interrupted();
         return false;
       }
 
@@ -93,8 +97,14 @@ namespace
     for (const auto &redirect : command.redirects)
     {
       std::string error;
-      if (!redirects.apply(redirect, error))
+      bool interrupted = false;
+      if (!redirects.apply(redirect, error, interrupted))
       {
+        if (interrupted)
+        {
+          // Ctrl-C while waiting to open a file: like a command killed by it.
+          return {.status = 130, .interrupted = true};
+        }
         std::cerr << error << std::endl;
         return {.status = 1};
       }

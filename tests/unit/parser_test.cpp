@@ -293,3 +293,68 @@ TEST_CASE("a pipeline remembers its text")
   REQUIRE(text_of("echo \"a b\"  'c'") == "echo \"a b\"  'c'");
   REQUIRE(text_of("a | b &") == "a | b");
 }
+
+TEST_CASE("< redirects standard input")
+{
+  for (const char *line : {"cat < f", "cat <f", "cat 0< f", "cat 0<f"})
+  {
+    auto parsed = parse(line);
+    INFO(line);
+    REQUIRE(parsed.pipeline.has_value());
+    const auto &command = parsed.pipeline->stages[0];
+    REQUIRE(command.args == Args{"cat"});
+    REQUIRE(command.redirects.size() == 1);
+    REQUIRE(command.redirects[0].input);
+    REQUIRE(command.redirects[0].fd == 0);
+    REQUIRE(command.redirects[0].path == "f");
+  }
+
+  auto fd3 = parse("cat 3< f");
+  REQUIRE(fd3.pipeline.has_value());
+  REQUIRE(fd3.pipeline->stages[0].redirects.size() == 1);
+  REQUIRE(fd3.pipeline->stages[0].redirects[0].fd == 3);
+  REQUIRE(fd3.pipeline->stages[0].redirects[0].input);
+
+  auto both = parse("cat < f > g");
+  REQUIRE(both.pipeline.has_value());
+  const auto &redirects = both.pipeline->stages[0].redirects;
+  REQUIRE(redirects.size() == 2);
+  REQUIRE(redirects[0].input);
+  REQUIRE(redirects[0].path == "f");
+  REQUIRE_FALSE(redirects[1].input);
+  REQUIRE(redirects[1].fd == 1);
+  REQUIRE(redirects[1].path == "g");
+}
+
+TEST_CASE("a quoted or escaped < is an argument")
+{
+  auto parsed = parse("echo \"<\" '<' \\<");
+  REQUIRE(parsed.pipeline.has_value());
+  REQUIRE(parsed.pipeline->stages[0].args == Args{"echo", "<", "<", "<"});
+  REQUIRE(parsed.pipeline->stages[0].redirects.empty());
+}
+
+TEST_CASE("the target of < is expanded")
+{
+  auto home = parse("cat < ~/f", 0, "/usr");
+  REQUIRE(home.pipeline.has_value());
+  REQUIRE(home.pipeline->stages[0].redirects.size() == 1);
+  REQUIRE(home.pipeline->stages[0].redirects[0].path == "/usr/f");
+
+  auto status = parse("cat < f$?", 3);
+  REQUIRE(status.pipeline.has_value());
+  REQUIRE(status.pipeline->stages[0].redirects.size() == 1);
+  REQUIRE(status.pipeline->stages[0].redirects[0].path == "f3");
+}
+
+TEST_CASE("< errors and the forms that are not supported")
+{
+  expect_error("cat <", "syntax error near unexpected token `newline'");
+  expect_error("cat < < f", "syntax error near unexpected token `<'");
+  expect_error("cat 10< f", "10: Bad file descriptor");
+  // Here-documents, here-strings, input duplication and read-write open.
+  for (const char *line : {"cat << EOF", "cat <<< x", "cat <& 0", "cat <> f", "cat <<"})
+  {
+    expect_error(line, "syntax error near unexpected token `<'");
+  }
+}

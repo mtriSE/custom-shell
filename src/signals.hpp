@@ -1,5 +1,7 @@
 #pragma once
 
+#include <sys/types.h>
+
 // Terminal signal handling for an interactive shell (stdin is a tty).
 // Nothing here depends on other project modules or on readline.
 
@@ -25,6 +27,13 @@ bool take_interrupt();
 // take_interrupt() with the result ignored; call before each prompt so a stale Ctrl-C
 // pressed while a command ran is not taken as an interrupt of the next line.
 void discard_interrupt();
+
+// open(2) for a redirect target. A blocking open (a FIFO nobody writes to yet) must not hang the
+// shell: when interactive, the SIGINT handler is made non-restarting around the call, so Ctrl-C
+// ends the wait. Returns the fd, or -1 with errno set; `interrupted` is true when the wait ended
+// because of Ctrl-C (errno is EINTR then). Not interactive: plain open. A Ctrl-C that arrives in
+// the instant before the call is not noticed.
+int open_interruptible(const char *path, int flags, mode_t mode, bool &interrupted);
 
 // For every forked child, before it execs or runs a builtin stage: SIGINT, SIGQUIT, SIGTSTP,
 // SIGTTIN and SIGTTOU back to their defaults (so Ctrl-Z stops the child and a background

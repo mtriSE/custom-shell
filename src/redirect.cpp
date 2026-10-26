@@ -1,5 +1,7 @@
 #include "redirect.hpp"
 
+#include "signals.hpp"
+
 #include <cerrno>
 #include <cstring>
 #include <iostream>
@@ -39,10 +41,13 @@ FdRedirect::FdRedirect(int fd, const std::string &path, OpenMode mode)
     flags |= O_RDONLY;
     break;
   }
-  int file_fd = open(path.c_str(), flags, 0644);
+  int file_fd = open_interruptible(path.c_str(), flags, 0644, interrupted_);
   if (file_fd < 0)
   {
-    error_ = path + ": " + std::strerror(errno);
+    if (!interrupted_)
+    {
+      error_ = path + ": " + std::strerror(errno);
+    }
     return;
   }
 

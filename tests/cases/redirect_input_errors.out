@@ -1,0 +1,11 @@
+$ nofile: No such file or directory
+$ 1
+$ nofile: No such file or directory
+$ 1
+$ nofile: No such file or directory
+$ 1
+$ /nonexistent_dir/f: No such file or directory
+$ 10: Bad file descriptor
+$ syntax error near unexpected token `newline'
+$ syntax error near unexpected token `<'
+$ 
