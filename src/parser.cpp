@@ -1,6 +1,5 @@
 #include "parser.hpp"
 
-#include <algorithm>
 #include <string_view>
 
 namespace
@@ -16,61 +15,24 @@ namespace
   // before anything else it stays a literal backslash.
   constexpr std::string_view DOUBLE_QUOTE_ESCAPES = "\"\\$`";
 
-  // fds above this are reserved: the shell keeps its saved copies from fd 10 up.
-  constexpr int MAX_FD = 9;
-
-  // The value of a string made only of digits (capped, so it can't overflow).
-  std::optional<int> fd_from_digits(const std::string &text)
-  {
-    if (text.empty())
-    {
-      return std::nullopt;
-    }
-
-    int value = 0;
-    for (char c : text)
-    {
-      if (c < '0' || c > '9')
-      {
-        return std::nullopt;
-      }
-      value = std::min(value * 10 + (c - '0'), 999999);
-    }
-    return value;
-  }
-
-  // Rejects fds the shell reserves for itself.
-  bool valid_fd(int fd, std::string &error)
-  {
-    if (fd > MAX_FD)
-    {
-      error = std::to_string(fd) + ": Bad file descriptor";
-      return false;
-    }
-    return true;
-  }
-
   struct Token
   {
-    std::string text;
-    // An unquoted, unescaped redirect operator; `text` is unused and
+    // The word, with the quoting of each piece; unused for operators.
+    Word word;
+    // An unquoted, unescaped redirect operator; `word` is unused and
     // `fd`/`append`/`dup` describe it.
     bool is_redirect = false;
     int fd = 1;
     bool append = false;
     // `>&`: the following word is an fd to copy, not a file.
     bool dup = false;
-    // A word that used any quote, backslash or expansion.
-    bool quoted = false;
-    // An unquoted, unescaped `|`; `text` is unused.
+    // An unquoted, unescaped `|`; `word` is unused.
     bool is_pipe = false;
   };
 
   class Tokenizer
   {
   public:
-    explicit Tokenizer(int last_status) : last_status_(last_status) {}
-
     std::vector<Token> run(const std::string &input)
     {
       input_ = input;
@@ -120,10 +82,12 @@ namespace
           DOUBLE_QUOTE_ESCAPES.find(c) == std::string_view::npos;
       if (keeps_backslash)
       {
-        current_ += '\\';
+        append('\\', Quoting::Double);
+        append(c, Quoting::Double);
+        return;
       }
 
-      append(c);
+      append(c, Quoting::Escaped);
     }
 
     // --- Per-state handlers -------------------------------------------------
@@ -134,27 +98,17 @@ namespace
       {
       case '\\':
         escaped_ = true;
-        in_token_ = true;
-        quoted_ = true;
+        begin_piece(Quoting::Escaped); // a trailing backslash is still an (empty) argument
         break;
 
       case '\'':
         state_ = State::SingleQuote;
-        in_token_ = true;
-        quoted_ = true;
+        begin_piece(Quoting::Single); // `''` is an empty argument
         break;
 
       case '"':
         state_ = State::DoubleQuote;
-        in_token_ = true;
-        quoted_ = true;
-        break;
-
-      case '$':
-        if (!expand_status())
-        {
-          append('$');
-        }
+        begin_piece(Quoting::Double);
         break;
 
       case '>':
@@ -163,7 +117,7 @@ namespace
 
       case '|':
         end_token();
-        tokens_.push_back({"", false, 1, false, false, false, true});
+        tokens_.push_back({.is_pipe = true});
         break;
 
       case ' ':
@@ -172,7 +126,7 @@ namespace
         break;
 
       default:
-        append(c);
+        append(c, Quoting::Unquoted);
         break;
       }
     }
@@ -186,7 +140,7 @@ namespace
       }
       else
       {
-        current_ += c;
+        append(c, Quoting::Single);
       }
     }
 
@@ -201,21 +155,29 @@ namespace
       {
         escaped_ = true;
       }
-      else if (c == '$' && expand_status())
-      {
-        // `$?` already appended.
-      }
       else
       {
-        current_ += c;
+        append(c, Quoting::Double);
       }
     }
 
     // --- Token building -----------------------------------------------------
 
-    void append(char c)
+    // Starts a piece even if no character follows (`''`, a trailing backslash).
+    void begin_piece(Quoting quoting)
     {
-      current_ += c;
+      current_.pieces.push_back({"", quoting});
+      in_token_ = true;
+    }
+
+    // Adds a character to the last piece, or to a new one if the quoting changed.
+    void append(char c, Quoting quoting)
+    {
+      if (current_.pieces.empty() || current_.pieces.back().quoting != quoting)
+      {
+        current_.pieces.push_back({"", quoting});
+      }
+      current_.pieces.back().text += c;
       in_token_ = true;
     }
 
@@ -226,27 +188,11 @@ namespace
         return;
       }
 
-      tokens_.push_back({std::move(current_), false, 1, false, false, quoted_});
-      current_.clear();
+      Token token;
+      token.word = std::move(current_);
+      tokens_.push_back(std::move(token));
+      current_ = {};
       in_token_ = false;
-      quoted_ = false;
-    }
-
-    // At a `$` that is followed by `?`, appends the last exit status and
-    // consumes the `?`. Marked quoted_ so the digits can never be read as an
-    // fd number (`echo $?>f` redirects stdout, like bash).
-    bool expand_status()
-    {
-      if (!next_is('?'))
-      {
-        return false;
-      }
-
-      current_ += std::to_string(last_status_);
-      in_token_ = true;
-      quoted_ = true;
-      ++pos_;
-      return true;
     }
 
     // True if the character right after the one being fed is `c`.
@@ -262,15 +208,15 @@ namespace
     {
       int fd = 1;
       std::optional<int> number;
-      if (in_token_ && !quoted_)
+      if (in_token_ && is_plain_number(current_))
       {
-        number = fd_from_digits(current_);
+        number = fd_from_digits(current_.pieces[0].text);
       }
 
       if (number)
       {
         fd = *number;
-        current_.clear();
+        current_ = {};
         in_token_ = false;
       }
       else
@@ -292,7 +238,7 @@ namespace
         ++pos_; // consume the `&`
       }
 
-      tokens_.push_back({"", true, fd, append, dup});
+      tokens_.push_back({.is_redirect = true, .fd = fd, .append = append, .dup = dup});
     }
 
     // --- State --------------------------------------------------------------
@@ -300,15 +246,12 @@ namespace
     // The whole line and the index of the char being fed, for one-char lookahead.
     std::string input_;
     size_t pos_ = 0;
-    int last_status_;
 
     std::vector<Token> tokens_;
-    std::string current_;
+    Word current_;
     State state_ = State::Normal;
     // True once an argument has started, even if it is still empty (e.g. '').
     bool in_token_ = false;
-    // True if the current token used any quote, backslash or expansion.
-    bool quoted_ = false;
     // Set right after a backslash; its meaning depends on state_.
     bool escaped_ = false;
   };
@@ -318,16 +261,16 @@ namespace
 {
   // One command of a pipeline: words and redirects, no `|`. `end_name` is how a
   // dangling redirect operator names what follows it in the error message.
-  std::optional<Command> parse_stage(std::vector<Token> &tokens, const char *end_name,
-                                     std::string &error)
+  std::optional<ParsedCommand> parse_stage(std::vector<Token> &tokens, const char *end_name,
+                                           std::string &error)
   {
-    Command command;
+    ParsedCommand command;
     for (size_t i = 0; i < tokens.size(); ++i)
     {
       // Plain word: it's an argument.
       if (!tokens[i].is_redirect)
       {
-        command.args.push_back(std::move(tokens[i].text));
+        command.words.push_back(std::move(tokens[i].word));
         continue;
       }
 
@@ -341,35 +284,17 @@ namespace
         return std::nullopt;
       }
 
-      Redirect redirect{.fd = tokens[i].fd, .append = tokens[i].append};
-      std::string &target = tokens[i + 1].text;
-
-      if (!valid_fd(redirect.fd, error))
+      // Only the fd written before the operator is checked here; a `>&` target is known after
+      // expansion (see expand_pipeline).
+      if (!valid_fd(tokens[i].fd, error))
       {
         return std::nullopt;
       }
 
-      if (tokens[i].dup)
-      {
-        // `2>&1`: the target must be the number of an fd to copy.
-        auto from = fd_from_digits(target);
-        if (!from)
-        {
-          error = target + ": Bad fd number";
-          return std::nullopt;
-        }
-        if (!valid_fd(*from, error))
-        {
-          return std::nullopt;
-        }
-        redirect.dup_from = *from;
-      }
-      else
-      {
-        redirect.path = std::move(target);
-      }
-
-      command.redirects.push_back(std::move(redirect));
+      command.redirects.push_back({.fd = tokens[i].fd,
+                                   .target = std::move(tokens[i + 1].word),
+                                   .append = tokens[i].append,
+                                   .dup = tokens[i].dup});
       ++i; // the target word is consumed too
     }
 
@@ -377,16 +302,16 @@ namespace
   }
 }
 
-std::optional<Pipeline> parse_pipeline(const std::string &input, int last_status, std::string &error)
+std::optional<PipelineNode> parse_pipeline(const std::string &input, std::string &error)
 {
   // Split the line into words, `>` markers and `|` markers (quotes/escapes
   // already resolved).
-  auto tokens = Tokenizer{last_status}.run(input);
+  auto tokens = Tokenizer{}.run(input);
 
   // A trailing unquoted `&` word runs the whole pipeline in the background.
-  Pipeline pipeline;
+  PipelineNode pipeline;
   if (!tokens.empty() && !tokens.back().is_redirect && !tokens.back().is_pipe &&
-      !tokens.back().quoted && tokens.back().text == "&")
+      is_literal(tokens.back().word, "&"))
   {
     tokens.pop_back();
     pipeline.background = true;
@@ -420,4 +345,14 @@ std::optional<Pipeline> parse_pipeline(const std::string &input, int last_status
     stage.clear();
   }
   return pipeline;
+}
+
+std::optional<Node> parse_line(const std::string &input, std::string &error)
+{
+  auto pipeline = parse_pipeline(input, error);
+  if (!pipeline)
+  {
+    return std::nullopt;
+  }
+  return Node{std::move(*pipeline)};
 }

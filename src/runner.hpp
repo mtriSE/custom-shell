@@ -1,5 +1,7 @@
 #pragma once
 
+#include "command.hpp"
+#include "expansion.hpp"
 #include "parser.hpp"
 
 #include <string>
@@ -24,3 +26,8 @@ struct Outcome
 // `&` background), or several joined by `|` as forked stages. `line` is the line as typed, kept
 // as the text of the job when the command or pipeline becomes one.
 Outcome run_pipeline(const Pipeline &pipeline, const std::string &line);
+
+// Runs a parsed line. Each pipeline of the tree is expanded just before it runs, with `context`
+// (an expansion error is printed to stderr and gives status 2; nothing runs then), and handed to
+// run_pipeline. `line` is the line as typed, as for run_pipeline.
+Outcome run_tree(const Node &node, const std::string &line, const ExpansionContext &context);
