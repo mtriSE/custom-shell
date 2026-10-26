@@ -15,19 +15,25 @@ namespace
   // before anything else it stays a literal backslash.
   constexpr std::string_view DOUBLE_QUOTE_ESCAPES = "\"\\$`";
 
+  // Operators are only recognised when unquoted and unescaped.
+  enum class Kind
+  {
+    Word,
+    Redirect,   // `>`, `>>`, `>&`; `fd`/`append`/`dup` describe it
+    Pipe,       // `|`
+    Semi,       // `;`
+    DoubleSemi, // `;;` (always an error)
+  };
+
   struct Token
   {
+    Kind kind = Kind::Word;
     // The word, with the quoting of each piece; unused for operators.
     Word word;
-    // An unquoted, unescaped redirect operator; `word` is unused and
-    // `fd`/`append`/`dup` describe it.
-    bool is_redirect = false;
     int fd = 1;
     bool append = false;
     // `>&`: the following word is an fd to copy, not a file.
     bool dup = false;
-    // An unquoted, unescaped `|`; `word` is unused.
-    bool is_pipe = false;
     // Where the token is in the line: [begin, end). Used for the text of a pipeline.
     size_t begin = 0;
     size_t end = 0;
@@ -120,7 +126,20 @@ namespace
 
       case '|':
         end_token();
-        tokens_.push_back({.is_pipe = true, .begin = pos_, .end = pos_ + 1});
+        tokens_.push_back({.kind = Kind::Pipe, .begin = pos_, .end = pos_ + 1});
+        break;
+
+      case ';':
+        end_token();
+        if (next_is(';'))
+        {
+          tokens_.push_back({.kind = Kind::DoubleSemi, .begin = pos_, .end = pos_ + 2});
+          ++pos_; // consume the second `;`
+        }
+        else
+        {
+          tokens_.push_back({.kind = Kind::Semi, .begin = pos_, .end = pos_ + 1});
+        }
         break;
 
       case ' ':
@@ -255,7 +274,7 @@ namespace
         ++pos_; // consume the `&`
       }
 
-      tokens_.push_back({.is_redirect = true,
+      tokens_.push_back({.kind = Kind::Redirect,
                          .fd = fd,
                          .append = append,
                          .dup = dup,
@@ -283,28 +302,32 @@ namespace
 
 namespace
 {
-  // One command of a pipeline: words and redirects, no `|`. `end_name` is how a
-  // dangling redirect operator names what follows it in the error message.
-  std::optional<ParsedCommand> parse_stage(std::vector<Token> &tokens, const char *end_name,
+  std::string syntax_error(const std::string &token)
+  {
+    return "syntax error near unexpected token `" + token + "'";
+  }
+
+  // One command of a pipeline: words and redirects, no operators. `end_name` is how a dangling
+  // redirect operator names what follows it in the error message.
+  std::optional<ParsedCommand> parse_stage(std::vector<Token> &tokens, const std::string &end_name,
                                            std::string &error)
   {
     ParsedCommand command;
     for (size_t i = 0; i < tokens.size(); ++i)
     {
       // Plain word: it's an argument.
-      if (!tokens[i].is_redirect)
+      if (tokens[i].kind == Kind::Word)
       {
         command.words.push_back(std::move(tokens[i].word));
         continue;
       }
 
       // The operator must be followed by a word, which is the target file.
-      bool has_target = i + 1 < tokens.size() && !tokens[i + 1].is_redirect;
+      bool has_target = i + 1 < tokens.size() && tokens[i + 1].kind == Kind::Word;
       if (!has_target)
       {
-        // Name the offending token like bash: another `>`, or end of line.
-        const char *unexpected = i + 1 < tokens.size() ? ">" : end_name;
-        error = std::string("syntax error near unexpected token `") + unexpected + "'";
+        // Name the offending token like bash: another `>`, or what ended the stage.
+        error = syntax_error(i + 1 < tokens.size() ? ">" : end_name);
         return std::nullopt;
       }
 
@@ -324,67 +347,158 @@ namespace
 
     return command;
   }
-}
 
-std::optional<PipelineNode> parse_pipeline(const std::string &input, std::string &error)
-{
-  // Split the line into words, `>` markers and `|` markers (quotes/escapes
-  // already resolved).
-  auto tokens = Tokenizer{}.run(input);
-
-  // A trailing unquoted `&` word runs the whole pipeline in the background.
-  PipelineNode pipeline;
-  size_t first_begin = tokens.empty() ? 0 : tokens.front().begin;
-  if (!tokens.empty() && !tokens.back().is_redirect && !tokens.back().is_pipe &&
-      is_literal(tokens.back().word, "&"))
+  // Walks the tokens once, left to right, so the first error by position is the one reported.
+  // Stages are closed by `|`, pipelines by `;` and the end of the line.
+  class Grouper
   {
-    tokens.pop_back();
-    pipeline.background = true;
-  }
-  const size_t last_end = tokens.empty() ? 0 : tokens.back().end;
+  public:
+    explicit Grouper(const std::string &input) : input_(input) {}
 
-  // A line with no tokens is one empty command; otherwise every `|` needs a
-  // command on both sides.
-  std::vector<Token> stage;
-  for (size_t i = 0; i <= tokens.size(); ++i)
-  {
-    const bool at_pipe = i < tokens.size() && tokens[i].is_pipe;
-    if (i < tokens.size() && !at_pipe)
+    std::optional<Node> run(std::vector<Token> tokens, bool background, std::string &error)
     {
-      stage.push_back(std::move(tokens[i]));
-      continue;
+      for (auto &token : tokens)
+      {
+        switch (token.kind)
+        {
+        case Kind::Word:
+        case Kind::Redirect:
+          note_token(token);
+          stage_.push_back(std::move(token));
+          break;
+
+        case Kind::Pipe:
+          if (stage_.empty())
+          {
+            error = syntax_error("|");
+            return std::nullopt;
+          }
+          note_token(token);
+          if (!close_stage("|", error))
+          {
+            return std::nullopt;
+          }
+          break;
+
+        case Kind::Semi:
+          if (stage_.empty())
+          {
+            error = syntax_error(";");
+            return std::nullopt;
+          }
+          if (!close_pipeline(";", error))
+          {
+            return std::nullopt;
+          }
+          break;
+
+        case Kind::DoubleSemi:
+          error = syntax_error(";;");
+          return std::nullopt;
+        }
+      }
+
+      // End of the line: a `|` still waiting for its command is an error, a trailing `;` is not.
+      bool pipeline_open = !stage_.empty() || !pipeline_.stages.empty();
+      if (pipeline_open)
+      {
+        if (stage_.empty())
+        {
+          error = syntax_error("newline");
+          return std::nullopt;
+        }
+        if (!close_pipeline("newline", error))
+        {
+          return std::nullopt;
+        }
+      }
+
+      // A trailing lone `&` runs the last pipeline of the line in the background.
+      if (background)
+      {
+        if (!pipeline_open)
+        {
+          error = syntax_error("&");
+          return std::nullopt;
+        }
+        std::get<PipelineNode>(items_.back()).background = true;
+      }
+
+      if (items_.empty())
+      {
+        // A blank line is one empty command.
+        PipelineNode blank;
+        blank.stages.push_back({});
+        return Node{std::move(blank)};
+      }
+      if (items_.size() == 1)
+      {
+        return Node{std::get<PipelineNode>(std::move(items_[0]))};
+      }
+      return Node{ListNode{std::move(items_)}};
     }
 
-    const bool last = i == tokens.size();
-    if (stage.empty() && (!last || !pipeline.stages.empty()))
+  private:
+    // Remembers where the current pipeline starts and ends in the line.
+    void note_token(const Token &token)
     {
-      error = std::string("syntax error near unexpected token `") + (last ? "newline" : "|") + "'";
-      return std::nullopt;
+      if (!has_tokens_)
+      {
+        begin_ = token.begin;
+        has_tokens_ = true;
+      }
+      end_ = token.end;
     }
 
-    auto command = parse_stage(stage, last ? "newline" : "|", error);
-    if (!command)
+    // The stage collected so far becomes a stage of the current pipeline.
+    bool close_stage(const std::string &end_name, std::string &error)
     {
-      return std::nullopt;
+      auto command = parse_stage(stage_, end_name, error);
+      if (!command)
+      {
+        return false;
+      }
+      pipeline_.stages.push_back(std::move(*command));
+      stage_.clear();
+      return true;
     }
-    pipeline.stages.push_back(std::move(*command));
-    stage.clear();
-  }
 
-  if (!tokens.empty())
-  {
-    // The tokens were moved from above, but their offsets are plain copies.
-    pipeline.text = input.substr(first_begin, last_end - first_begin);
-  }
-  return pipeline;
+    // The current pipeline is complete: it becomes an item of the list.
+    bool close_pipeline(const std::string &end_name, std::string &error)
+    {
+      if (!close_stage(end_name, error))
+      {
+        return false;
+      }
+      pipeline_.text = input_.substr(begin_, end_ - begin_);
+      items_.push_back(std::move(pipeline_));
+      pipeline_ = {};
+      has_tokens_ = false;
+      return true;
+    }
+
+    const std::string &input_;
+    std::vector<Token> stage_;
+    PipelineNode pipeline_;
+    std::vector<Item> items_;
+    size_t begin_ = 0;
+    size_t end_ = 0;
+    bool has_tokens_ = false;
+  };
 }
 
 std::optional<Node> parse_line(const std::string &input, std::string &error)
 {
-  auto pipeline = parse_pipeline(input, error);
-  if (!pipeline)
+  // Split the line into words and operators (quotes/escapes already resolved).
+  auto tokens = Tokenizer{}.run(input);
+
+  // A trailing unquoted `&` word runs the last pipeline of the line in the background.
+  bool background = false;
+  if (!tokens.empty() && tokens.back().kind == Kind::Word && is_literal(tokens.back().word, "&"))
   {
-    return std::nullopt;
+    tokens.pop_back();
+    background = true;
   }
-  return Node{std::move(*pipeline)};
+
+  return Grouper(input).run(std::move(tokens), background, error);
 }

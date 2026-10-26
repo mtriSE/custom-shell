@@ -35,16 +35,21 @@ struct PipelineNode
   std::string text;
 };
 
-// What a line parses to. One alternative today (a pipeline, with its `&` flag); later ones
-// (lists, subshells, `if`) are added as alternatives next to it.
-struct Node
+// What a list holds between its `;`.
+using Item = std::variant<PipelineNode>;
+
+// Items separated by `;` (two or more; a single item is not wrapped).
+struct ListNode
 {
-  std::variant<PipelineNode> value;
+  std::vector<Item> items;
 };
 
-// Parses one input line without expanding anything. On a syntax error returns std::nullopt and
-// sets `error`.
-std::optional<PipelineNode> parse_pipeline(const std::string &input, std::string &error);
+// What a line parses to: a pipeline, or a list of them. Later alternatives (subshells, `if`) are
+// added next to these.
+struct Node
+{
+  std::variant<PipelineNode, ListNode> value;
+};
 
 // Parses one input line into its command tree. On a syntax error returns std::nullopt and sets
 // `error`.

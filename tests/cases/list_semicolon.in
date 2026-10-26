@@ -1,0 +1,13 @@
+echo a; echo b
+false; echo $?
+echo a;
+echo a;echo b
+echo x | cat; echo y | cat
+echo hi > f; cat f
+cd /nonexistent; echo still here
+echo 'a;b' "c;d" e\;f
+; echo no
+echo a ;; echo b
+echo a ; ; echo b
+echo $?
+echo bye; exit; echo never

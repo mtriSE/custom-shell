@@ -20,10 +20,23 @@ namespace
     std::string error;
   };
 
+  // The line as one pipeline (REQUIRE-fails if it is a list); nullopt on a syntax error.
+  std::optional<PipelineNode> parse_one(const std::string &line, std::string &error)
+  {
+    auto node = parse_line(line, error);
+    if (!node)
+    {
+      return std::nullopt;
+    }
+    const auto *pipeline = std::get_if<PipelineNode>(&node->value);
+    REQUIRE(pipeline != nullptr);
+    return *pipeline;
+  }
+
   Parsed parse(const std::string &line, int status = 3, const std::string &home = "")
   {
     Parsed parsed;
-    auto node = parse_pipeline(line, parsed.error);
+    auto node = parse_one(line, parsed.error);
     if (node)
     {
       parsed.pipeline = expand_pipeline(*node, {.last_status = status, .home = home}, parsed.error);
@@ -231,7 +244,7 @@ TEST_CASE("redirect targets are expanded")
 TEST_CASE("parsing alone expands nothing")
 {
   std::string error;
-  auto node = parse_pipeline("echo $?", error);
+  auto node = parse_one("echo $?", error);
   REQUIRE(node.has_value());
   REQUIRE(node->stages[0].words.size() == 2);
   const Word &word = node->stages[0].words[1];
@@ -239,7 +252,7 @@ TEST_CASE("parsing alone expands nothing")
   REQUIRE(word.pieces[0].text == "$?");
   REQUIRE(word.pieces[0].quoting == Quoting::Unquoted);
 
-  auto redirected = parse_pipeline("echo $?>f", error);
+  auto redirected = parse_one("echo $?>f", error);
   REQUIRE(redirected.has_value());
   REQUIRE(redirected->stages[0].words.size() == 2);
   REQUIRE(redirected->stages[0].redirects.size() == 1);

@@ -274,7 +274,26 @@ It walks the tokens in order:
 Redirects are **separated from the words**, so builtins and external programs never
 see `2>` or the target file name.
 
-### 4.4 Expansion (`expand_word`, `expand_pipeline`)
+### 4.4 Command lists (`;`)
+
+A line is one pipeline or a list of pipelines separated by an unquoted `;` (with or without spaces:
+`a;b`). `parse_line` returns a `Node` (a `PipelineNode` or a `ListNode`) and the `evaluator` runs it:
+
+- Every item runs, in order, whatever the status of the previous one; the status of the line is
+  the last one's. `$?` is read when each pipeline is about to run (`false; echo $?` prints `1`).
+- A trailing `;` is allowed (`echo a;`). An empty command is a syntax error near the operator that
+  follows it: `; a` and `a ; ; b` are errors near `;`, `a ;; b` and `a;;` near `;;`, as in bash.
+  Nothing on the line runs when the line has a syntax error.
+- `exit` ends the line and the shell. If there are stopped jobs the first `exit` is refused
+  (`There are stopped jobs.`, status 1, as a command that failed) and the rest of the line runs.
+- Ctrl-C on a foreground command stops the rest of the line (`$?` 130). Ctrl-Z stops that job
+  (`[N]+  Stopped                 <pipeline>`: the job text is the pipeline, not the whole line); the
+  stopped job counts as status 148 and the next item runs.
+- An error found at expansion time (`echo >&x`) in the middle of a list counts as that command
+  ending with status 2 and the line goes on; the commands before it have already run (documented
+  limitation: a syntax error stops everything before anything runs).
+
+### 4.5 Expansion (`expand_word`, `expand_pipeline`)
 
 Runs on each pipeline right before it executes (see section 3); the tokenizer never expands.
 For every command word and every redirect target:

@@ -1,6 +1,7 @@
 #include "runner.hpp"
 
 #include "builtins.hpp"
+#include "evaluator.hpp"
 #include "executor.hpp"
 #include "job_control.hpp"
 #include "job_table.hpp"
@@ -249,24 +250,25 @@ Outcome run_pipeline(const Pipeline &pipeline, const std::string &line)
 
 Outcome run_tree(const Node &node, ExpansionContext context, const Notify &notify)
 {
-  return std::visit(
-      [&](const PipelineNode &parsed) -> Outcome
-      {
-        // Expanded here, right before it runs, so `$?` is the status of whatever ran last.
-        Outcome outcome;
-        std::string error;
-        auto pipeline = expand_pipeline(parsed, context, error);
-        if (!pipeline)
-        {
-          std::cerr << error << std::endl;
-          outcome.status = 2;
-        }
-        else
-        {
-          outcome = run_pipeline(*pipeline, parsed.text);
-        }
-        notify(outcome);
-        return {.exit = outcome.exit, .status = outcome.status};
-      },
-      node.value);
+  // Runs one pipeline of the tree; `context` keeps the status of the last command that ran, so
+  // `$?` is read when the pipeline is about to run, not when the line was parsed.
+  StepFn step = [&](const PipelineNode &parsed)
+  {
+    Outcome outcome;
+    std::string error;
+    auto pipeline = expand_pipeline(parsed, context, error);
+    if (!pipeline)
+    {
+      std::cerr << error << std::endl;
+      outcome.status = 2;
+    }
+    else
+    {
+      outcome = run_pipeline(*pipeline, parsed.text);
+    }
+    notify(outcome);
+    context.last_status = outcome.status;
+    return outcome;
+  };
+  return evaluate(node, step);
 }
