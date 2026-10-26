@@ -261,3 +261,22 @@ TEST_CASE("~ is expanded in redirect targets and in background lines")
   REQUIRE(piped.pipeline.has_value());
   REQUIRE(piped.pipeline->stages[1].args == Args{"cat", "/usr/x"});
 }
+
+TEST_CASE("a pipeline remembers its text")
+{
+  auto text_of = [](const std::string &line)
+  {
+    std::string error;
+    auto node = parse_line(line, error);
+    REQUIRE(node.has_value());
+    const auto *pipeline = std::get_if<PipelineNode>(&node->value);
+    REQUIRE(pipeline != nullptr);
+    return pipeline->text;
+  };
+
+  REQUIRE(text_of("  echo hi | cat  ") == "echo hi | cat");
+  REQUIRE(text_of("sleep 1 &") == "sleep 1");
+  REQUIRE(text_of("echo a > f") == "echo a > f");
+  REQUIRE(text_of("echo \"a b\"  'c'") == "echo \"a b\"  'c'");
+  REQUIRE(text_of("a | b &") == "a | b");
+}

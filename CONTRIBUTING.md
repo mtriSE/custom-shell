@@ -116,13 +116,13 @@ RAII object, `TerminalHandoff`, so no path leaves the shell without the terminal
 ignores SIGTTOU, which is what lets it call `tcsetpgrp`/`tcsetattr` while it is not in front. Only
 the group in front receives Ctrl-C, Ctrl-\ and Ctrl-Z from the tty, so `$?` is 130 or 131 for the
 first two as before; a program that handles the signal and exits by itself keeps its own status.
-`Outcome::interrupted` tells `Shell::run` that something ended by SIGINT/SIGQUIT; it then prints
+`Outcome::interrupted` tells the `notify` callback of `Shell::run` that something ended by SIGINT/SIGQUIT; it then prints
 one `\n` (only on a tty, after the redirects are undone), because the prompt would otherwise start
 mid-line. The `^C` itself is echoed by the terminal, not by the shell. Limitation: bash also prints
 `Quit (core dumped)` after Ctrl-\; this shell does not.
 
 Ctrl-Z stops every process of the job. The job stays in the table as `Stopped`, its terminal modes
-are saved in `Job::modes`, `$?` is 148 (128 + SIGTSTP) and `Shell::run` prints
+are saved in `Job::modes`, `$?` is 148 (128 + SIGTSTP) and the `notify` callback prints
 `\n[N]+  Stopped                 <command>` once the command's redirects are undone (the terminal
 echoed `^Z` without a newline). A job that ended leaves the table without a report; its status
 becomes `$?`. `fg` restores the job's own modes, sends SIGCONT to its group and waits again (a job
@@ -200,7 +200,11 @@ getline ──► parse_line ──► run_tree ──► expand_pipeline ──
    3. If `args[0]` is a builtin, call `run_builtin`.
    4. Else if it is found in `$PATH`, call `execute`.
    5. Else print `<cmd>: command not found` with status 127.
-5. **Result.** `run_command` returns `Outcome{exit, status}`; `status` is stored
+5. **Notify.** After each pipeline has run and its redirects are undone, `run_tree` calls the
+   `notify` callback of `Shell::run`: the newline after Ctrl-C, the `[N]+  Stopped` line, `[N] pid`
+   of a background job, and the refusal of `exit` while a job is stopped (the `exit` then counts as
+   a command that failed with status 1).
+6. **Result.** `run_command` returns `Outcome{exit, status}`; `status` is stored
    in `last_status_` so the next line can read it through `$?`.
 
 Exit statuses: 1 when a redirect target cannot be opened, 2 for a syntax error,

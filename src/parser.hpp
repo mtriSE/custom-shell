@@ -30,6 +30,9 @@ struct PipelineNode
 {
   std::vector<ParsedCommand> stages; // never empty; one empty command for a blank line
   bool background = false;
+  // The pipeline as typed: from its first to its last token (redirects and pipes included),
+  // without the closing `&` and without surrounding spaces. It is the text of the job.
+  std::string text;
 };
 
 // What a line parses to. One alternative today (a pipeline, with its `&` flag); later ones

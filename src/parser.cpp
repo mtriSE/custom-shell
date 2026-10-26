@@ -28,6 +28,9 @@ namespace
     bool dup = false;
     // An unquoted, unescaped `|`; `word` is unused.
     bool is_pipe = false;
+    // Where the token is in the line: [begin, end). Used for the text of a pipeline.
+    size_t begin = 0;
+    size_t end = 0;
   };
 
   class Tokenizer
@@ -117,7 +120,7 @@ namespace
 
       case '|':
         end_token();
-        tokens_.push_back({.is_pipe = true});
+        tokens_.push_back({.is_pipe = true, .begin = pos_, .end = pos_ + 1});
         break;
 
       case ' ':
@@ -166,7 +169,17 @@ namespace
     // Starts a piece even if no character follows (`''`, a trailing backslash).
     void begin_piece(Quoting quoting)
     {
+      start_token();
       current_.pieces.push_back({"", quoting});
+    }
+
+    // Marks where the word being built starts, once.
+    void start_token()
+    {
+      if (!in_token_)
+      {
+        token_begin_ = pos_;
+      }
       in_token_ = true;
     }
 
@@ -178,7 +191,7 @@ namespace
         current_.pieces.push_back({"", quoting});
       }
       current_.pieces.back().text += c;
-      in_token_ = true;
+      start_token();
     }
 
     void end_token()
@@ -190,6 +203,8 @@ namespace
 
       Token token;
       token.word = std::move(current_);
+      token.begin = token_begin_;
+      token.end = pos_; // the character being fed (a space or an operator), or the end of the line
       tokens_.push_back(std::move(token));
       current_ = {};
       in_token_ = false;
@@ -207,6 +222,7 @@ namespace
     void start_redirect()
     {
       int fd = 1;
+      size_t begin = pos_;
       std::optional<int> number;
       if (in_token_ && is_plain_number(current_))
       {
@@ -216,6 +232,7 @@ namespace
       if (number)
       {
         fd = *number;
+        begin = token_begin_; // the digits are part of the operator
         current_ = {};
         in_token_ = false;
       }
@@ -238,7 +255,12 @@ namespace
         ++pos_; // consume the `&`
       }
 
-      tokens_.push_back({.is_redirect = true, .fd = fd, .append = append, .dup = dup});
+      tokens_.push_back({.is_redirect = true,
+                         .fd = fd,
+                         .append = append,
+                         .dup = dup,
+                         .begin = begin,
+                         .end = pos_ + 1});
     }
 
     // --- State --------------------------------------------------------------
@@ -252,6 +274,8 @@ namespace
     State state_ = State::Normal;
     // True once an argument has started, even if it is still empty (e.g. '').
     bool in_token_ = false;
+    // Where the word being built starts in the line (valid while in_token_).
+    size_t token_begin_ = 0;
     // Set right after a backslash; its meaning depends on state_.
     bool escaped_ = false;
   };
@@ -310,12 +334,14 @@ std::optional<PipelineNode> parse_pipeline(const std::string &input, std::string
 
   // A trailing unquoted `&` word runs the whole pipeline in the background.
   PipelineNode pipeline;
+  size_t first_begin = tokens.empty() ? 0 : tokens.front().begin;
   if (!tokens.empty() && !tokens.back().is_redirect && !tokens.back().is_pipe &&
       is_literal(tokens.back().word, "&"))
   {
     tokens.pop_back();
     pipeline.background = true;
   }
+  const size_t last_end = tokens.empty() ? 0 : tokens.back().end;
 
   // A line with no tokens is one empty command; otherwise every `|` needs a
   // command on both sides.
@@ -343,6 +369,12 @@ std::optional<PipelineNode> parse_pipeline(const std::string &input, std::string
     }
     pipeline.stages.push_back(std::move(*command));
     stage.clear();
+  }
+
+  if (!tokens.empty())
+  {
+    // The tokens were moved from above, but their offsets are plain copies.
+    pipeline.text = input.substr(first_begin, last_end - first_begin);
   }
   return pipeline;
 }

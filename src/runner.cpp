@@ -247,20 +247,26 @@ Outcome run_pipeline(const Pipeline &pipeline, const std::string &line)
   return run_stages(pipeline.stages, line, pipeline.background);
 }
 
-Outcome run_tree(const Node &node, const std::string &line, const ExpansionContext &context)
+Outcome run_tree(const Node &node, ExpansionContext context, const Notify &notify)
 {
   return std::visit(
       [&](const PipelineNode &parsed) -> Outcome
       {
         // Expanded here, right before it runs, so `$?` is the status of whatever ran last.
+        Outcome outcome;
         std::string error;
         auto pipeline = expand_pipeline(parsed, context, error);
         if (!pipeline)
         {
           std::cerr << error << std::endl;
-          return {.status = 2};
+          outcome.status = 2;
         }
-        return run_pipeline(*pipeline, line);
+        else
+        {
+          outcome = run_pipeline(*pipeline, parsed.text);
+        }
+        notify(outcome);
+        return {.exit = outcome.exit, .status = outcome.status};
       },
       node.value);
 }
